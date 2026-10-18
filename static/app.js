@@ -77,7 +77,60 @@ function renderVoiceSelect() {
   }
   sel.innerHTML = S.voices.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join("");
   if (voiceById(S.lastVoice)) sel.value = S.lastVoice;
+  renderOrb();
 }
+
+/* ---------------- Orbe ---------------- */
+function voiceHue(id) { let h = 0; for (const c of String(id || "")) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
+const MODES = { auto: "Naturel", calm: "Stable", happy: "Chaleureux", sad: "Grave", surprised: "Dynamique" };
+function renderOrb() {
+  const v = currentVoice(), orb = $("#orb");
+  orb.classList.toggle("empty", !v);
+  if (!v) { $("#orbName").textContent = "Aucune voix"; $("#orbMeta").textContent = "Clone ta première voix dans « Mes voix »."; return; }
+  orb.style.setProperty("--h", voiceHue(v.id) + "deg");
+  $("#orbName").textContent = v.name;
+  const d = Math.floor(daysSince(v.created));
+  $("#orbMeta").textContent = `${v.analyse?.categorie || "Voix clonée"} · mode ${MODES[v.emotion || "auto"].toLowerCase()}${v.created ? " · clonée " + (d < 1 ? "aujourd'hui" : `il y a ${d} j`) : ""}`;
+}
+let actx = null; const srcMap = new WeakMap(); let rafId = 0; let playingEl = null;
+function orbListen(el) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+    let node = srcMap.get(el);
+    if (!node) {
+      const src = actx.createMediaElementSource(el);
+      const an = actx.createAnalyser(); an.fftSize = 512;
+      src.connect(an); an.connect(actx.destination);
+      node = { an, buf: new Uint8Array(an.fftSize) }; srcMap.set(el, node);
+    }
+    playingEl = el;
+    cancelAnimationFrame(rafId);
+    const orb = $("#orb");
+    const loop = () => {
+      if (playingEl !== el || el.paused) { orb.style.setProperty("--lvl", 0); return; }
+      node.an.getByteTimeDomainData(node.buf);
+      let sum = 0; for (const x of node.buf) { const d = (x - 128) / 128; sum += d * d; }
+      orb.style.setProperty("--lvl", Math.min(1, Math.sqrt(sum / node.buf.length) * 4).toFixed(3));
+      rafId = requestAnimationFrame(loop);
+    };
+    loop();
+  } catch (e) { /* animation facultative */ }
+}
+document.addEventListener("play", e => { if (e.target.tagName === "AUDIO") orbListen(e.target); }, true);
+
+/* ---------------- Thème ---------------- */
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $("#themeBtn").setAttribute("aria-label", t === "dark" ? "Passer en mode clair" : "Passer en mode sombre");
+}
+$("#themeBtn").onclick = () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  applyTheme(next);
+  try { localStorage.setItem("voixstable_theme", next); } catch (e) { /* ignore */ }
+};
+applyTheme(document.documentElement.dataset.theme ||
+  (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
 
 function renderVoices() {
   const list = $("#voiceList");
@@ -96,8 +149,8 @@ function renderVoices() {
       : `<span class="badge ok">Active</span>`;
     const mode = { auto: "Naturel", calm: "Stable", happy: "Chaleureux", sad: "Grave", surprised: "Dynamique" }[v.emotion || "auto"];
     return `<div class="voice">
-      <h3>${esc(v.name)}</h3>
-      <div class="meta">${esc(v.analyse?.categorie || "Voix clonée")}</div>
+      <div class="vhead"><div class="orb orb-mini" style="--h:${voiceHue(v.id)}deg"><span></span></div>
+      <div><h3>${esc(v.name)}</h3><div class="meta">${esc(v.analyse?.categorie || "Voix clonée")}</div></div></div>
       <div class="tags"><span class="badge">${mode}</span><span class="badge">Vitesse ${(v.speed ?? 1).toFixed(2)}</span>${exp}</div>
       <div class="meta small">ID MiniMax : ${esc(v.id)}</div>
       <div class="actions">
@@ -109,8 +162,10 @@ function renderVoices() {
   $$("[data-edit]", list).forEach(b => b.onclick = () => openEditor(b.dataset.edit));
 }
 
-$("#voiceSelect").addEventListener("change", () => { S.lastVoice = $("#voiceSelect").value; save(); });
-$("#modelSelect").addEventListener("change", () => { S.model = $("#modelSelect").value; save(); updateEstimate(); });
+$("#voiceSelect").addEventListener("change", () => { S.lastVoice = $("#voiceSelect").value; save(); renderOrb(); });
+$("#modelSelect").addEventListener("change", () => { S.model = $("#modelSelect").value; save(); updateEstimate(); syncModelSeg(); });
+function syncModelSeg() { $$("#modelSeg button").forEach(b => b.classList.toggle("on", b.dataset.model === $("#modelSelect").value)); }
+$$("#modelSeg button").forEach(b => b.onclick = () => { $("#modelSelect").value = b.dataset.model; $("#modelSelect").dispatchEvent(new Event("change")); });
 
 /* ---------------- Assistant de clonage ---------------- */
 let W = {};
@@ -359,7 +414,7 @@ $("#btnGenerate").onclick = async () => {
 
 const chunkEls = new Map();
 function startPolling(id, scroll) {
-  clearTimeout(pollT); chunkEls.clear(); $("#chunkList").innerHTML = ""; outdated = false;
+  clearTimeout(pollT); chunkEls.clear(); $("#chunkList").innerHTML = ""; $("#leds").innerHTML = ""; outdated = false;
   $("#jobCard").hidden = false; $("#finalBox").hidden = true;
   if (scroll) $("#jobCard").scrollIntoView({ behavior: "smooth" });
   const tick = async () => {
@@ -396,6 +451,22 @@ function renderJob(j) {
     $("#btnReassemble").classList.toggle("primary", outdated);
     $("#btnReassemble").textContent = outdated ? "Réassembler avec tes corrections" : "Réassembler";
   }
+  $("#orb").classList.toggle("busy", j.status === "en cours");
+  const LCLS = { ok: "ok", a_verifier: "warn", erreur: "bad", generation: "run", correction: "run" };
+  const leds = $("#leds");
+  if (leds.children.length !== j.chunks.length) {
+    leds.innerHTML = j.chunks.map(c => `<i data-led="${c.index}" title="Morceau ${c.index + 1}"></i>`).join("");
+    $$("i", leds).forEach(el => el.onclick = () => {
+      const t = chunkEls.get(+el.dataset.led); if (!t) return;
+      t.hidden = false; t.scrollIntoView({ behavior: "smooth", block: "center" });
+      t.classList.add("flash"); setTimeout(() => t.classList.remove("flash"), 1400);
+    });
+  }
+  j.chunks.forEach(c => {
+    let k = LCLS[c.status] || "";
+    if (c.status === "ok" && c.attempts.length > 1) k = "ok";
+    leds.children[c.index].className = k;
+  });
   const only = $("#onlyCheck").checked;
   const list = $("#chunkList");
   j.chunks.forEach(c => {
@@ -550,7 +621,7 @@ load();
 script.value = S.script || "";
 $("#apiKey").value = S.apiKey || "";
 $("#apiBase").value = S.base || "https://api.minimax.io";
-$("#modelSelect").value = S.model || "speech-2.8-hd";
+$("#modelSelect").value = S.model || "speech-2.8-hd"; syncModelSeg();
 banners(); renderVoiceSelect(); renderVoices(); renderDico(); updateEstimate();
 if (S.lastJob) startPolling(S.lastJob, false);
 const old = S.voices.filter(v => daysSince(v.lastUsed || v.created) >= 5);
