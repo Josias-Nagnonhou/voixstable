@@ -1,0 +1,558 @@
+/* VoixStable — interface */
+(() => {
+"use strict";
+
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const STORE = "voixstable_v1";
+const DEFAULT_PAUSES = { point: 0.55, question: 0.7, exclamation: 0.65, suspension: 0.8, paragraphe: 1.1, virgule: 0 };
+const PRICE = { "speech-2.8-hd": 100, "speech-2.8-turbo": 60 };
+const FCFA = 600;
+
+let S = { apiKey: "", base: "https://api.minimax.io", voices: [], dictionary: [], lastVoice: "", model: "speech-2.8-hd", lastJob: "", script: "" };
+function load() {
+  try { const raw = localStorage.getItem(STORE); if (raw) S = Object.assign(S, JSON.parse(raw)); } catch (e) { /* stockage indisponible */ }
+}
+function save() {
+  try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) { /* ignore */ }
+}
+
+function toast(msg, bad = false, ms = 3800) {
+  const t = $("#toast");
+  t.textContent = msg; t.hidden = false; t.className = "toast" + (bad ? " bad" : "");
+  clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms);
+}
+
+async function api(path, { method = "GET", body, form } = {}) {
+  const headers = { "x-api-key": S.apiKey || "", "x-api-base": S.base || "" };
+  let payload;
+  if (form) payload = form;
+  else if (body !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
+  const r = await fetch(path, { method, headers, body: payload });
+  let data = null;
+  try { data = await r.json(); } catch (e) { /* vide */ }
+  if (!r.ok) {
+    let msg = data && data.detail ? data.detail : `Erreur ${r.status}`;
+    if (Array.isArray(msg)) msg = msg.map(m => m.msg).join(", ");
+    throw new Error(msg);
+  }
+  return data;
+}
+const fcfa = n => `${Math.round(n).toLocaleString("fr-FR")} FCFA`;
+const isDemo = () => (S.apiKey || "").trim().toLowerCase() === "demo";
+
+/* ---------------- Navigation ---------------- */
+function showTab(name) {
+  $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  $$(".panel").forEach(p => p.classList.toggle("active", p.id === name));
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+$$(".tab").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
+document.addEventListener("click", e => {
+  const g = e.target.closest("[data-goto]");
+  if (g) { e.preventDefault(); showTab(g.dataset.goto); }
+});
+
+function banners() {
+  $("#keyBanner").classList.toggle("hidden", !!S.apiKey);
+  $("#demoBanner").classList.toggle("hidden", !isDemo());
+}
+
+/* ---------------- Voix ---------------- */
+function voiceById(id) { return S.voices.find(v => v.id === id); }
+function currentVoice() { return voiceById($("#voiceSelect").value); }
+function voicePayload(v, model) {
+  return { voice_id: v.id, emotion: v.emotion || "auto", speed: v.speed ?? 1, vol: v.vol ?? 1, pitch: v.pitch ?? 0,
+           language_boost: v.lang || "French", model: model || $("#modelSelect").value };
+}
+function daysSince(ts) { return ts ? (Date.now() - ts) / 86400000 : 99; }
+
+function renderVoiceSelect() {
+  const sel = $("#voiceSelect");
+  if (!S.voices.length) {
+    sel.innerHTML = `<option value="">Aucune voix : clone-en une dans « Mes voix »</option>`;
+    return;
+  }
+  sel.innerHTML = S.voices.map(v => `<option value="${esc(v.id)}">${esc(v.name)}</option>`).join("");
+  if (voiceById(S.lastVoice)) sel.value = S.lastVoice;
+}
+
+function renderVoices() {
+  const list = $("#voiceList");
+  if (!S.voices.length) {
+    list.innerHTML = `<div class="empty"><h3>Aucune voix pour le moment</h3>
+      <p>Clone ta première voix : importe un audio de 1 à 2 minutes, l'outil s'occupe du reste.</p>
+      <button class="btn primary" id="emptyNew">+ Cloner une voix</button></div>`;
+    $("#emptyNew").onclick = openWizard;
+    return;
+  }
+  list.innerHTML = S.voices.map(v => {
+    const d = daysSince(v.lastUsed || v.created);
+    const left = Math.max(0, Math.ceil(7 - d));
+    const exp = d >= 5
+      ? `<span class="badge bad">À utiliser sous ${left} j, sinon MiniMax la supprime</span>`
+      : `<span class="badge ok">Active</span>`;
+    const mode = { auto: "Naturel", calm: "Stable", happy: "Chaleureux", sad: "Grave", surprised: "Dynamique" }[v.emotion || "auto"];
+    return `<div class="voice">
+      <h3>${esc(v.name)}</h3>
+      <div class="meta">${esc(v.analyse?.categorie || "Voix clonée")}</div>
+      <div class="tags"><span class="badge">${mode}</span><span class="badge">Vitesse ${(v.speed ?? 1).toFixed(2)}</span>${exp}</div>
+      <div class="meta small">ID MiniMax : ${esc(v.id)}</div>
+      <div class="actions">
+        <button class="btn primary small" data-use="${esc(v.id)}">Utiliser</button>
+        <button class="btn ghost small" data-edit="${esc(v.id)}">Réglages</button>
+      </div></div>`;
+  }).join("");
+  $$("[data-use]", list).forEach(b => b.onclick = () => { S.lastVoice = b.dataset.use; save(); renderVoiceSelect(); showTab("studio"); });
+  $$("[data-edit]", list).forEach(b => b.onclick = () => openEditor(b.dataset.edit));
+}
+
+$("#voiceSelect").addEventListener("change", () => { S.lastVoice = $("#voiceSelect").value; save(); });
+$("#modelSelect").addEventListener("change", () => { S.model = $("#modelSelect").value; save(); updateEstimate(); });
+
+/* ---------------- Assistant de clonage ---------------- */
+let W = {};
+function openWizard() {
+  W = {};
+  $("#wizard").hidden = false; $("#voiceEditor").hidden = true;
+  wizStep(1);
+  $("#fileInput").value = ""; $("#promptText").value = ""; $("#voiceName").value = "";
+  $("#wizard").scrollIntoView({ behavior: "smooth" });
+}
+function wizStep(n) {
+  $$("#wizard .step").forEach(s => (s.hidden = +s.dataset.step !== n));
+  $$("#wizard .steps li").forEach(li => {
+    const k = +li.dataset.step;
+    li.classList.toggle("active", k === n); li.classList.toggle("done", k < n);
+  });
+}
+$("#btnNewVoice").onclick = openWizard;
+$("#btnCloseWizard").onclick = () => ($("#wizard").hidden = true);
+$("#btnBack1").onclick = () => wizStep(1);
+
+const drop = $("#drop");
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => { if (e.dataTransfer.files[0]) analyzeFile(e.dataTransfer.files[0]); });
+$("#fileInput").addEventListener("change", e => { if (e.target.files[0]) analyzeFile(e.target.files[0]); });
+
+async function analyzeFile(file) {
+  $("#analyzing").hidden = false;
+  try {
+    const fd = new FormData();
+    fd.append("file", file); fd.append("use_best", $("#useBest").value); fd.append("target", $("#targetLen").value);
+    const a = await api("/api/analyze", { method: "POST", form: fd });
+    W.analysis = a;
+    if (!$("#voiceName").value) $("#voiceName").value = file.name.replace(/\.[^.]+$/, "").slice(0, 40);
+    renderAnalysis(a);
+    wizStep(2);
+  } catch (e) { toast(e.message, true, 6000); }
+  finally { $("#analyzing").hidden = true; }
+}
+
+function mmss(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+function renderAnalysis(a) {
+  const q = a.qualite >= 80 ? "ok" : a.qualite >= 55 ? "warn" : "bad";
+  $("#analysis").innerHTML = `
+    <div class="metric wide"><span>Catégorie détectée</span><b>${esc(a.categorie)}</b></div>
+    <div class="metric"><span>Qualité pour le clonage</span><b><span class="badge ${q}">${a.qualite}/100</span></b></div>
+    <div class="metric"><span>Propreté du son</span><b>${esc(a.proprete_label)}</b></div>
+    <div class="metric"><span>Vitesse de parole</span><b>${esc(a.vitesse_label)}</b></div>
+    <div class="metric"><span>Expressivité (intonations)</span><b>${esc(a.expressivite_label)}</b></div>
+    <div class="metric"><span>Parole détectée</span><b>${mmss(a.duree_parole)} sur ${mmss(a.duree_totale)}</b></div>
+    ${a.avertissements.length ? `<div class="warnbox"><b>À savoir</b><ul>${a.avertissements.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}`;
+  const t = Date.now();
+  $("#aSample").src = a.url_echantillon + "?t=" + t;
+  $("#aPrompt").src = a.url_extrait + "?t=" + t;
+  $("#sampleInfo").textContent = a.duree_totale > a.duree_echantillon + 5
+    ? `Meilleur passage choisi : de ${mmss(a.segment_debut)} à ${mmss(a.segment_fin)}, silences raccourcis, volume égalisé (${mmss(a.duree_echantillon)}).`
+    : `Audio complet nettoyé : silences raccourcis, volume égalisé (${mmss(a.duree_echantillon)}).`;
+  if (a.proprete_db < 24) $("#noiseRed").checked = true;
+}
+
+$("#btnClone").onclick = async () => {
+  if (!S.apiKey) { toast("Ajoute d'abord ta clé API dans Réglages (ou « demo »).", true); return; }
+  const name = $("#voiceName").value.trim();
+  if (!name) { toast("Donne un nom à la voix.", true); return; }
+  $("#cloning").hidden = false; $("#btnClone").disabled = true;
+  try {
+    const r = await api("/api/clone", { method: "POST", body: {
+      sample_id: W.analysis.sample_id, name, prompt_text: $("#promptText").value.trim(),
+      use_prompt: !!$("#promptText").value.trim(), noise_reduction: $("#noiseRed").checked,
+      language_boost: $("#voiceLang").value, model: $("#modelSelect").value } });
+    W.voice = { id: r.voice_id, name, lang: $("#voiceLang").value, emotion: "auto", speed: 1, vol: 1, pitch: 0,
+                pauses: { ...DEFAULT_PAUSES }, analyse: r.analyse, created: Date.now(), lastUsed: Date.now(), demo: r.demo };
+    if (/posé|calme/i.test(r.analyse.categorie)) W.voice.pauses.point = 0.65;
+    if (/énergique/i.test(r.analyse.categorie)) { W.voice.pauses.point = 0.45; W.voice.pauses.paragraphe = 0.9; }
+    S.voices.push(W.voice); S.lastVoice = W.voice.id; save();
+    renderVoices(); renderVoiceSelect();
+    wizStep(3);
+    runVariants();
+  } catch (e) { toast(e.message, true, 7000); }
+  finally { $("#cloning").hidden = true; $("#btnClone").disabled = false; }
+};
+
+async function runVariants() {
+  $("#testing").hidden = false; $("#variants").innerHTML = "";
+  try {
+    const r = await api("/api/test-variants", { method: "POST", body: {
+      voice_id: W.voice.id, model: $("#modelSelect").value, language_boost: W.voice.lang, dictionary: S.dictionary } });
+    W.voice.lastUsed = Date.now(); save();
+    $("#variants").innerHTML = r.variants.map(v => `
+      <div class="variant">
+        <b>${esc(v.label)}</b>
+        <audio controls preload="none" src="${v.url}"></audio>
+        <button class="btn primary small" data-pick="${v.key}">Je garde celle-ci</button>
+      </div>`).join("");
+    $$("[data-pick]").forEach(b => b.onclick = () => {
+      const v = r.variants.find(x => x.key === b.dataset.pick);
+      W.voice.emotion = v.emotion; W.voice.speed = v.speed;
+      const m = v.metrics || {};
+      W.voice.ref = { cps: m.cps, niveau_db: m.niveau_db, hauteur: m.hauteur, expressivite: m.expressivite };
+      save(); renderVoices(); wizStep(4);
+    });
+  } catch (e) { toast(e.message, true, 7000); }
+  finally { $("#testing").hidden = true; }
+}
+$("#btnRetest").onclick = runVariants;
+
+$("#btnSync").onclick = async () => {
+  if (!S.apiKey) { toast("Ajoute d'abord ta clé API dans Réglages.", true); return; }
+  try {
+    const r = await api("/api/voices");
+    let added = 0;
+    for (const v of r.voices) {
+      if (!voiceById(v.voice_id)) {
+        S.voices.push({ id: v.voice_id, name: (v.description && v.description[0]) || v.voice_id, emotion: "auto", speed: 1, vol: 1, pitch: 0,
+                        lang: "French", pauses: { ...DEFAULT_PAUSES }, created: Date.now(), lastUsed: Date.now() });
+        added++;
+      }
+    }
+    if (!r.voices.length) {
+      const id = prompt("Aucune voix trouvée automatiquement (MiniMax ne liste une voix qu'après sa première utilisation).\nSi tu connais l'identifiant d'une voix clonée, colle-le ici :");
+      if (id && !voiceById(id.trim())) {
+        S.voices.push({ id: id.trim(), name: id.trim(), emotion: "auto", speed: 1, vol: 1, pitch: 0, lang: "French",
+                        pauses: { ...DEFAULT_PAUSES }, created: Date.now(), lastUsed: Date.now() });
+        added++;
+      }
+    }
+    save(); renderVoices(); renderVoiceSelect();
+    toast(added ? `${added} voix ajoutée(s).` : "Toutes tes voix sont déjà là.");
+  } catch (e) { toast(e.message, true, 6000); }
+};
+
+/* ---------------- Éditeur de voix ---------------- */
+let E = null;
+const PMAP = [["edPoint", "point", "oP1"], ["edQuestion", "question", "oP2"], ["edExcl", "exclamation", "oP3"],
+              ["edSusp", "suspension", "oP4"], ["edPara", "paragraphe", "oP5"], ["edComma", "virgule", "oP6"]];
+function openEditor(id) {
+  E = voiceById(id); if (!E) return;
+  $("#wizard").hidden = true; $("#voiceEditor").hidden = false;
+  $("#edTitle").textContent = "Réglages : " + E.name;
+  $("#edName").value = E.name; $("#edEmotion").value = E.emotion || "auto"; $("#edLang").value = E.lang || "French";
+  $("#edSpeed").value = E.speed ?? 1; $("#edPitch").value = E.pitch ?? 0; $("#edVol").value = E.vol ?? 1;
+  const p = Object.assign({ ...DEFAULT_PAUSES }, E.pauses || {});
+  PMAP.forEach(([inp, k]) => ($("#" + inp).value = p[k]));
+  $("#edAudio").hidden = true;
+  syncOutputs();
+  $("#voiceEditor").scrollIntoView({ behavior: "smooth" });
+}
+function syncOutputs() {
+  $("#oSpeed").textContent = (+$("#edSpeed").value).toFixed(2);
+  $("#oPitch").textContent = $("#edPitch").value;
+  $("#oVol").textContent = (+$("#edVol").value).toFixed(1);
+  PMAP.forEach(([inp, , out]) => ($("#" + out).textContent = (+$("#" + inp).value).toFixed(2) + " s"));
+}
+$$("#voiceEditor input[type=range]").forEach(r => r.addEventListener("input", syncOutputs));
+function editorValues() {
+  const pauses = {}; PMAP.forEach(([inp, k]) => (pauses[k] = +$("#" + inp).value));
+  return { name: $("#edName").value.trim() || E.name, emotion: $("#edEmotion").value, lang: $("#edLang").value,
+           speed: +$("#edSpeed").value, pitch: +$("#edPitch").value, vol: +$("#edVol").value, pauses };
+}
+$("#btnCloseEditor").onclick = () => ($("#voiceEditor").hidden = true);
+$("#btnEdSave").onclick = () => {
+  Object.assign(E, editorValues()); save(); renderVoices(); renderVoiceSelect();
+  toast("Réglages enregistrés."); $("#voiceEditor").hidden = true;
+};
+$("#btnEdTest").onclick = async () => {
+  const tmp = Object.assign({ ...E }, editorValues());
+  $("#btnEdTest").disabled = true;
+  try {
+    const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(tmp), text: $("#edTestText").value, dictionary: S.dictionary, pauses: tmp.pauses } });
+    E.lastUsed = Date.now(); save();
+    const a = $("#edAudio"); a.hidden = false; a.src = r.url; a.play().catch(() => {});
+  } catch (e) { toast(e.message, true, 6000); }
+  finally { $("#btnEdTest").disabled = false; }
+};
+$("#btnEdDelete").onclick = async () => {
+  if (!confirm(`Supprimer la voix « ${E.name} » de l'outil ?`)) return;
+  if (confirm("La supprimer aussi définitivement de ton compte MiniMax ?\n(OK = oui, Annuler = la garder chez MiniMax)")) {
+    try { await api("/api/voices/delete", { method: "POST", body: { voice_id: E.id } }); }
+    catch (e) { toast("Supprimée de l'outil, mais pas chez MiniMax : " + e.message, true, 6000); }
+  }
+  S.voices = S.voices.filter(v => v.id !== E.id); save();
+  $("#voiceEditor").hidden = true; renderVoices(); renderVoiceSelect();
+};
+
+/* ---------------- Studio ---------------- */
+const script = $("#script");
+script.value = S.script || "";
+let estT;
+script.addEventListener("input", () => {
+  clearTimeout(estT);
+  estT = setTimeout(() => { S.script = script.value; save(); }, 600);
+  updateEstimate();
+});
+function updateEstimate() {
+  const n = script.value.length;
+  $("#charCount").textContent = `${n.toLocaleString("fr-FR")} caractère${n > 1 ? "s" : ""}`;
+  if (!n) { $("#estimate").textContent = ""; return; }
+  const usd = n * (PRICE[$("#modelSelect").value] || 100) / 1e6;
+  $("#estimate").textContent = `Environ ${fcfa(usd * FCFA)} · ~${Math.max(1, Math.round(n / 14.5 / 60))} min de voix`;
+}
+
+function genOptions() {
+  return { chiffres: $("#optChiffres").checked, abreviations: $("#optAbrev").checked, tirets: $("#optTirets").checked };
+}
+async function prepareText() {
+  const v = currentVoice();
+  return api("/api/prepare", { method: "POST", body: {
+    text: script.value, dictionary: S.dictionary, options: genOptions(), max_chars: +$("#maxChars").value,
+    pauses: (v && v.pauses) || DEFAULT_PAUSES, model: $("#modelSelect").value } });
+}
+function renderPreview(r) {
+  $("#previewCard").hidden = false;
+  $("#previewMeta").textContent = `${r.chunks.length} morceaux · ${fcfa(r.cost.fcfa)}`;
+  $("#changes").innerHTML = r.changes.length
+    ? r.changes.map(c => `<span class="change"><s>${esc(c.avant) || "∅"}</s> → <b>${esc(c.apres) || "∅"}</b></span>`).join("")
+    : `<span class="muted small">Aucune correction nécessaire.</span>`;
+  $("#chunksPreview").innerHTML = r.chunks.map(c =>
+    `<div class="cp"><span class="num">#${c.index + 1}</span>${esc(c.minimax_text).replace(/&lt;#([\d.]+)#&gt;/g, '<span class="pause">pause $1 s</span>')}${c.pause_after ? `<span class="pause">puis ${c.pause_after} s</span>` : ""}</div>`).join("");
+}
+$("#btnPreview").onclick = async () => {
+  if (!script.value.trim()) { toast("Colle d'abord ton script.", true); return; }
+  try { renderPreview(await prepareText()); $("#previewCard").scrollIntoView({ behavior: "smooth" }); }
+  catch (e) { toast(e.message, true); }
+};
+
+let JOB = null, pollT = null, outdated = false;
+$("#btnGenerate").onclick = async () => {
+  if (!S.apiKey) { toast("Ajoute ta clé API dans Réglages (ou « demo » pour essayer).", true); showTab("reglages"); return; }
+  const v = currentVoice();
+  if (!v) { toast("Clone ou ajoute d'abord une voix.", true); showTab("voix"); return; }
+  if (!script.value.trim()) { toast("Colle d'abord ton script.", true); return; }
+  if (JOB && JOB.status === "en cours" && !confirm("Une génération est déjà en cours. En lancer une nouvelle ?")) return;
+  $("#btnGenerate").disabled = true;
+  try {
+    const prep = await prepareText();
+    renderPreview(prep);
+    const r = await api("/api/jobs", { method: "POST", body: {
+      chunks: prep.chunks, voice: voicePayload(v), ref: v.ref || {}, threshold: +$("#threshold").value,
+      max_retries: +$("#retries").value } });
+    v.lastUsed = Date.now(); S.lastJob = r.id; save(); renderVoices();
+    startPolling(r.id, true);
+  } catch (e) { toast(e.message, true, 6000); }
+  finally { $("#btnGenerate").disabled = false; }
+};
+
+const chunkEls = new Map();
+function startPolling(id, scroll) {
+  clearTimeout(pollT); chunkEls.clear(); $("#chunkList").innerHTML = ""; outdated = false;
+  $("#jobCard").hidden = false; $("#finalBox").hidden = true;
+  if (scroll) $("#jobCard").scrollIntoView({ behavior: "smooth" });
+  const tick = async () => {
+    try {
+      JOB = await api("/api/jobs/" + id);
+      renderJob(JOB);
+      if (JOB.status === "en cours") pollT = setTimeout(tick, 1500);
+      else if (JOB.status === "termine" && scroll) toast("Voix off terminée !");
+    } catch (e) {
+      if (/introuvable/.test(e.message)) { $("#jobCard").hidden = true; S.lastJob = ""; save(); }
+      else pollT = setTimeout(tick, 4000);
+    }
+  };
+  tick();
+}
+
+const STATUS = {
+  attente: ["En attente", "run"], generation: ["Génération…", "run"], genere: ["Généré", "run"],
+  correction: ["Correction…", "run"], ok: ["Parfait", "ok"], a_verifier: ["À écouter", "warn"], erreur: ["Erreur", "bad"],
+};
+function renderJob(j) {
+  $("#jobPhase").textContent = j.error ? "Erreur : " + j.error : j.phase;
+  $("#jobBar").style.width = (j.status === "termine" ? 100 : Math.min(97, j.progress)) + "%";
+  $("#stTotal").textContent = j.total; $("#stOk").textContent = j.ok; $("#stCheck").textContent = j.a_verifier;
+  $("#stRegen").textContent = j.regenerations; $("#stCost").textContent = j.cost.fcfa.toLocaleString("fr-FR");
+  $("#btnCancel").hidden = j.status !== "en cours";
+  if (j.final) {
+    $("#finalBox").hidden = false;
+    const fa = $("#finalAudio");
+    const ver = j.final + (JOB && JOB._ver || "");
+    if (fa.dataset.src !== ver) { fa.dataset.src = ver; fa.src = j.final + "?v=" + Date.now(); }
+    const v = currentVoice();
+    $("#btnDownload").href = `${j.final}?name=${encodeURIComponent((v ? v.name : "voix") + "-voix-off")}`;
+    $("#btnReassemble").classList.toggle("primary", outdated);
+    $("#btnReassemble").textContent = outdated ? "Réassembler avec tes corrections" : "Réassembler";
+  }
+  const only = $("#onlyCheck").checked;
+  const list = $("#chunkList");
+  j.chunks.forEach(c => {
+    const sig = [c.status, c.best, c.attempts.length, c.score, c.text].join("|");
+    let el = chunkEls.get(c.index);
+    if (!el) { el = document.createElement("div"); list.appendChild(el); chunkEls.set(c.index, el); }
+    el.hidden = only && c.status !== "a_verifier" && c.status !== "erreur";
+    if (el.dataset.sig === sig) return;
+    const playing = el.querySelector("audio") && !el.querySelector("audio").paused;
+    if (playing) return;
+    el.dataset.sig = sig;
+    const [lab, cls] = STATUS[c.status] || [c.status, ""];
+    const best = c.attempts.find(a => a.n === c.best);
+    el.className = "chunk st-" + c.status;
+    el.innerHTML = `
+      <div class="chunk-top">
+        <div><span class="badge">#${c.index + 1}</span> <span class="badge ${cls}">${lab}${c.score != null && c.status !== "correction" ? " · " + c.score + "/100" : ""}</span></div>
+        <div class="chunk-tools">
+          ${best ? `<audio controls preload="none" src="${best.url}"></audio>` : ""}
+        </div>
+      </div>
+      <div class="chunk-text">${esc(c.text)}</div>
+      ${c.issues && c.issues.length ? `<div class="issues">${c.issues.map(esc).join(" · ")}</div>` : ""}
+      <div class="chunk-top" style="margin-top:8px">
+        <div class="attempts">${c.attempts.length > 1 ? c.attempts.map(a =>
+          `<button class="att ${a.n === c.best ? "sel" : ""}" data-choose="${a.n}" title="${esc((a.issues || []).join(", "))}">Essai ${a.n}${a.score != null ? " · " + a.score : ""}</button>`).join("") : ""}</div>
+        <div class="chunk-tools">
+          <button class="btn ghost small" data-act="edit">Modifier le texte</button>
+          <button class="btn ghost small" data-act="regen">Refaire (~${Math.max(1, Math.round(c.chars * (PRICE[$("#modelSelect").value] || 100) / 1e6 * FCFA))} FCFA)</button>
+        </div>
+      </div>
+      <div class="edit-area"><textarea>${esc(c.text)}</textarea>
+        <div class="actions"><button class="btn primary small" data-act="regen-edit">Régénérer avec ce texte</button></div></div>`;
+    $$("[data-choose]", el).forEach(b => b.onclick = () => chooseAttempt(c.index, +b.dataset.choose));
+    $("[data-act=edit]", el).onclick = () => $(".edit-area", el).classList.toggle("open");
+    $("[data-act=regen]", el).onclick = () => regen(c.index, null);
+    $("[data-act=regen-edit]", el).onclick = () => regen(c.index, $("textarea", el).value);
+  });
+}
+JOB = null;
+
+async function regen(i, text) {
+  if (!JOB) return;
+  const el = chunkEls.get(i);
+  el.dataset.sig = ""; el.querySelector(".badge:nth-child(2)").textContent = "Correction…";
+  try {
+    const r = await api(`/api/jobs/${JOB.id}/chunks/${i}/regen`, { method: "POST", body: { text, dictionary: S.dictionary } });
+    JOB = r; outdated = true; renderJob(r);
+    const a = chunkEls.get(i).querySelector("audio"); if (a) a.play().catch(() => {});
+  } catch (e) { toast(e.message, true, 6000); el.dataset.sig = ""; renderJob(JOB); }
+}
+async function chooseAttempt(i, n) {
+  try { const r = await api(`/api/jobs/${JOB.id}/chunks/${i}/choose`, { method: "POST", body: { n } }); JOB = r; outdated = true; renderJob(r); }
+  catch (e) { toast(e.message, true); }
+}
+$("#btnReassemble").onclick = async () => {
+  if (!JOB) return;
+  $("#btnReassemble").disabled = true;
+  try { const r = await api(`/api/jobs/${JOB.id}/assemble`, { method: "POST" }); JOB = r; JOB._ver = Date.now(); outdated = false; renderJob(r); toast("Voix off mise à jour."); }
+  catch (e) { toast(e.message, true); }
+  finally { $("#btnReassemble").disabled = false; }
+};
+$("#btnCancel").onclick = async () => { if (JOB) { await api(`/api/jobs/${JOB.id}/cancel`, { method: "POST" }).catch(() => {}); toast("Arrêt demandé."); } };
+$("#onlyCheck").addEventListener("change", () => JOB && (chunkEls.forEach(el => (el.dataset.sig = "")), renderJob(JOB)));
+
+/* ---------------- Dictionnaire ---------------- */
+const PACKS = {
+  foot: [["PSG", "pé èsse gé"], ["OM", "o èm"], ["OL", "o èl"], ["UEFA", "ué fa"], ["FIFA", "fi fa"], ["VAR", "var"],
+         ["Mbappé", "Èmbapé"], ["Vinícius", "Vinissiousse"], ["Bellingham", "Bèllinngame"], ["Haaland", "Holande"],
+         ["Yamal", "Yamal"], ["Liverpool", "Liveurpoule"], ["Barça", "Barssa"], ["Ballon d'Or", "Ballon d'or"]],
+  islam: [["Bismillah", "Bismillahi"], ["hadith", "hadisse"], ["hadiths", "hadisses"], ["Allahou Akbar", "Allahou akbare"],
+          ["Coran", "Coran"], ["sourate", "sourate"], ["Ramadan", "Ramadane"], ["Inch'Allah", "Inn cha Allah"],
+          ["Subhanallah", "Soubhanallah"], ["Alhamdoulillah", "Al hamdou lillah"], ["Médine", "Médine"], ["Ibn", "Ibne"]],
+  chretien: [["Ménas", "Mé nasse"], ["Jésus-Christ", "Jésus Christ"], ["Yahvé", "Ya vé"], ["YHWH", "Ya vé"],
+             ["Abraham", "Abra hame"], ["Jérusalem", "Jérusalème"], ["Amen", "Amène"]],
+};
+function renderDico() {
+  const q = ($("#dSearch").value || "").toLowerCase();
+  const items = S.dictionary.map((d, i) => ({ ...d, i })).filter(d => !q || d.mot.toLowerCase().includes(q) || d.lecture.toLowerCase().includes(q));
+  $("#dicoCount").textContent = `${S.dictionary.length} mot${S.dictionary.length > 1 ? "s" : ""}`;
+  $("#dicoList").innerHTML = items.length ? items.map(d => `
+    <div class="drow"><b>${esc(d.mot)}</b><span class="arrow">→</span><span>${esc(d.lecture)}</span><button data-del="${d.i}">Retirer</button></div>`).join("")
+    : `<p class="muted small">Ton dictionnaire est vide. Ajoute les mots que MiniMax prononce mal.</p>`;
+  $$("[data-del]").forEach(b => b.onclick = () => { S.dictionary.splice(+b.dataset.del, 1); save(); renderDico(); });
+}
+function addWord(mot, lecture) {
+  mot = mot.trim(); lecture = lecture.trim();
+  if (!mot || !lecture) return false;
+  const ex = S.dictionary.find(d => d.mot.toLowerCase() === mot.toLowerCase());
+  if (ex) ex.lecture = lecture; else S.dictionary.push({ mot, lecture });
+  return true;
+}
+$("#btnDAdd").onclick = () => {
+  if (!addWord($("#dMot").value, $("#dLecture").value)) { toast("Remplis le mot et sa lecture.", true); return; }
+  save(); renderDico(); $("#dMot").value = ""; $("#dLecture").value = ""; $("#dMot").focus();
+};
+$("#dLecture").addEventListener("keydown", e => { if (e.key === "Enter") $("#btnDAdd").click(); });
+$("#dSearch").addEventListener("input", renderDico);
+$$("[data-pack]").forEach(b => b.onclick = () => {
+  let n = 0;
+  PACKS[b.dataset.pack].forEach(([m, l]) => { if (!S.dictionary.some(d => d.mot.toLowerCase() === m.toLowerCase())) { S.dictionary.push({ mot: m, lecture: l }); n++; } });
+  save(); renderDico(); toast(n ? `${n} mot(s) ajouté(s). Teste-les et ajuste si besoin.` : "Déjà dans ton dictionnaire.");
+});
+$("#btnDTest").onclick = async () => {
+  const mot = $("#dMot").value.trim(), lecture = $("#dLecture").value.trim();
+  const v = currentVoice();
+  if (!v) { toast("Clone d'abord une voix pour tester.", true); return; }
+  if (!mot) { toast("Écris le mot à tester.", true); return; }
+  const dict = S.dictionary.filter(d => d.mot.toLowerCase() !== mot.toLowerCase());
+  if (lecture) dict.push({ mot, lecture });
+  try {
+    const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(v), text: `Écoutez bien ce mot : ${mot}. Encore une fois : ${mot}.`, dictionary: dict } });
+    const a = $("#dAudio"); a.hidden = false; a.src = r.url; a.play().catch(() => {});
+  } catch (e) { toast(e.message, true, 6000); }
+};
+
+/* ---------------- Réglages ---------------- */
+$("#apiKey").value = S.apiKey || "";
+$("#apiBase").value = S.base || "https://api.minimax.io";
+$("#btnShowKey").onclick = () => {
+  const k = $("#apiKey"); k.type = k.type === "password" ? "text" : "password";
+  $("#btnShowKey").textContent = k.type === "password" ? "Afficher" : "Masquer";
+};
+$("#btnSaveKey").onclick = async () => {
+  S.apiKey = $("#apiKey").value.trim(); S.base = $("#apiBase").value; save(); banners();
+  const st = $("#keyStatus");
+  if (!S.apiKey) { st.textContent = "Clé effacée."; st.className = "status"; return; }
+  st.textContent = "Vérification…"; st.className = "status";
+  try { const r = await api("/api/check-key", { method: "POST" }); st.textContent = "✓ " + r.message; st.className = "status ok"; }
+  catch (e) { st.textContent = "✗ " + e.message; st.className = "status bad"; }
+};
+$("#btnExport").onclick = () => {
+  const data = { ...S }; delete data.apiKey; delete data.lastJob; delete data.script;
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = `voixstable-reglages-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+  toast("Fichier exporté (ta clé API n'y est pas, par sécurité).");
+};
+$("#importFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const d = JSON.parse(await f.text());
+    (d.voices || []).forEach(v => { const ex = voiceById(v.id); if (ex) Object.assign(ex, v); else S.voices.push(v); });
+    (d.dictionary || []).forEach(x => addWord(x.mot, x.lecture));
+    save(); renderVoices(); renderVoiceSelect(); renderDico(); toast("Réglages importés.");
+  } catch (err) { toast("Fichier invalide.", true); }
+  e.target.value = "";
+});
+
+/* ---------------- Démarrage ---------------- */
+load();
+script.value = S.script || "";
+$("#apiKey").value = S.apiKey || "";
+$("#apiBase").value = S.base || "https://api.minimax.io";
+$("#modelSelect").value = S.model || "speech-2.8-hd";
+banners(); renderVoiceSelect(); renderVoices(); renderDico(); updateEstimate();
+if (S.lastJob) startPolling(S.lastJob, false);
+const old = S.voices.filter(v => daysSince(v.lastUsed || v.created) >= 5);
+if (old.length) setTimeout(() => toast(`Attention : ${old.map(v => v.name).join(", ")} doit être utilisée bientôt, sinon MiniMax la supprime (7 jours sans usage).`, true, 9000), 800);
+})();

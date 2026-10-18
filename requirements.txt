@@ -1,0 +1,7 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+python-multipart==0.0.20
+numpy>=1.26
+num2words==0.5.14
+imageio-ffmpeg==0.6.0
+requests>=2.31

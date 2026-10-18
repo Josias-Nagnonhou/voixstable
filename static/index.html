@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VoixStable</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e8a54b'/><path d='M7 16h2M11 11v10M15 7v18M19 11v10M23 14v4' stroke='%23161210' stroke-width='2.4' stroke-linecap='round'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M7 16h2M11 11v10M15 7v18M19 11v10M23 14v4" stroke="var(--on-accent)" stroke-width="2.4" stroke-linecap="round"/></svg>
+    <span>VoixStable</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="studio">Studio</button>
+    <button class="tab" data-tab="voix">Mes voix</button>
+    <button class="tab" data-tab="dico">Dictionnaire</button>
+    <button class="tab" data-tab="reglages">Réglages</button>
+  </nav>
+</header>
+
+<div id="keyBanner" class="banner hidden">
+  Ajoute ta clé API MiniMax dans <a href="#" data-goto="reglages">Réglages</a>. Pour découvrir l'outil sans clé, tape <b>demo</b> comme clé.
+</div>
+<div id="demoBanner" class="banner demo hidden">
+  Mode démo : les « voix » sont des sons de test. Aucun crédit n'est dépensé. Mets ta vraie clé dans Réglages pour de vraies voix.
+</div>
+
+<main>
+
+<!-- ===================== STUDIO ===================== -->
+<section id="studio" class="panel active">
+  <div class="grid-studio">
+    <div class="card">
+      <div class="card-head">
+        <h2>Ton script</h2>
+        <span class="muted" id="charCount">0 caractère</span>
+      </div>
+      <div class="row">
+        <label class="field grow">
+          <span>Voix</span>
+          <select id="voiceSelect"></select>
+        </label>
+        <label class="field">
+          <span>Qualité</span>
+          <select id="modelSelect">
+            <option value="speech-2.8-hd">HD (meilleure)</option>
+            <option value="speech-2.8-turbo">Turbo (moins chère)</option>
+          </select>
+        </label>
+      </div>
+      <textarea id="script" placeholder="Colle ton script ici. Les chiffres, abréviations, tirets et références (Jean 3:16, 14h30, 51, 2-1…) seront corrigés automatiquement avant la lecture."></textarea>
+      <details class="adv">
+        <summary>Réglages avancés de cette génération</summary>
+        <div class="row wrap">
+          <label class="field"><span>Taille des morceaux</span>
+            <select id="maxChars">
+              <option value="180">Petits (~2 phrases) : le plus stable</option>
+              <option value="280" selected>Moyens (~3 phrases) : recommandé</option>
+              <option value="420">Grands (~5 phrases) : plus fluide</option>
+            </select></label>
+          <label class="field"><span>Exigence du contrôle</span>
+            <select id="threshold">
+              <option value="50">Souple</option>
+              <option value="62" selected>Normale</option>
+              <option value="74">Stricte</option>
+            </select></label>
+          <label class="field"><span>Corrections auto max</span>
+            <select id="retries">
+              <option value="0">Aucune</option>
+              <option value="1">1 par morceau</option>
+              <option value="2" selected>2 par morceau</option>
+              <option value="3">3 par morceau</option>
+            </select></label>
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" id="optChiffres" checked> Chiffres en lettres</label>
+          <label><input type="checkbox" id="optAbrev" checked> Développer les abréviations</label>
+          <label><input type="checkbox" id="optTirets" checked> Corriger les tirets (peut-être, a-t-il)</label>
+        </div>
+      </details>
+      <div class="actions">
+        <button class="btn ghost" id="btnPreview">Aperçu du texte</button>
+        <button class="btn primary" id="btnGenerate">Générer la voix</button>
+      </div>
+      <p class="estimate" id="estimate"></p>
+    </div>
+
+    <div class="card" id="previewCard" hidden>
+      <div class="card-head">
+        <h2>Texte préparé</h2>
+        <span class="muted" id="previewMeta"></span>
+      </div>
+      <p class="muted small">Voici exactement ce que MiniMax va lire. Les corrections sont surlignées.</p>
+      <div id="changes" class="changes"></div>
+      <div id="chunksPreview" class="chunks-preview"></div>
+    </div>
+  </div>
+
+  <div class="card" id="jobCard" hidden>
+    <div class="card-head">
+      <h2>Génération</h2>
+      <div class="job-actions">
+        <button class="btn ghost small" id="btnCancel">Arrêter</button>
+      </div>
+    </div>
+    <div class="phase" id="jobPhase">…</div>
+    <div class="bar"><div id="jobBar"></div></div>
+    <div class="stats">
+      <div><b id="stTotal">0</b><span>morceaux</span></div>
+      <div><b id="stOk">0</b><span>parfaits</span></div>
+      <div><b id="stCheck">0</b><span>à écouter</span></div>
+      <div><b id="stRegen">0</b><span>corrigés auto</span></div>
+      <div><b id="stCost">0</b><span>FCFA dépensés</span></div>
+    </div>
+    <div id="finalBox" class="final" hidden>
+      <div>
+        <h3>Ta voix off est prête</h3>
+        <audio id="finalAudio" controls preload="none"></audio>
+      </div>
+      <div class="final-actions">
+        <a class="btn primary" id="btnDownload" download>Télécharger le MP3</a>
+        <button class="btn ghost" id="btnReassemble">Réassembler après corrections</button>
+      </div>
+    </div>
+    <div class="filter-row">
+      <label><input type="checkbox" id="onlyCheck"> Afficher seulement les morceaux à écouter</label>
+    </div>
+    <div id="chunkList" class="chunk-list"></div>
+  </div>
+</section>
+
+<!-- ===================== VOIX ===================== -->
+<section id="voix" class="panel">
+  <div class="card-head page-head">
+    <h2>Mes voix</h2>
+    <div class="row-tight">
+      <button class="btn ghost small" id="btnSync">Retrouver mes voix MiniMax</button>
+      <button class="btn primary small" id="btnNewVoice">+ Cloner une voix</button>
+    </div>
+  </div>
+  <div id="voiceList" class="voice-list"></div>
+
+  <div class="card wizard" id="wizard" hidden>
+    <div class="card-head">
+      <h2>Cloner une nouvelle voix</h2>
+      <button class="btn ghost small" id="btnCloseWizard">Fermer</button>
+    </div>
+
+    <ol class="steps">
+      <li class="active" data-step="1">Audio</li>
+      <li data-step="2">Analyse</li>
+      <li data-step="3">Clonage</li>
+      <li data-step="4">Réglage</li>
+    </ol>
+
+    <div class="step" data-step="1">
+      <label class="drop" id="drop">
+        <input type="file" id="fileInput" accept="audio/*,video/*,.mp3,.wav,.m4a,.mp4,.ogg,.webm,.aac,.flac">
+        <strong>Choisis ou dépose ton audio</strong>
+        <span>MP3, WAV, M4A, et même une vidéo MP4. Un long fichier (prêche, podcast) est accepté : l'outil choisira lui-même le meilleur passage.</span>
+      </label>
+      <div class="row wrap">
+        <label class="field"><span>Durée du passage à cloner</span>
+          <select id="targetLen">
+            <option value="60">1 minute</option>
+            <option value="90" selected>1 min 30 (recommandé)</option>
+            <option value="120">2 minutes</option>
+            <option value="240">4 minutes</option>
+          </select></label>
+        <label class="field"><span>Passage</span>
+          <select id="useBest">
+            <option value="true" selected>Choisir le meilleur passage automatiquement</option>
+            <option value="false">Utiliser tout l'audio (max 5 min)</option>
+          </select></label>
+      </div>
+      <p class="muted small">Conseils : une seule personne, sans musique ni écho, qui parle dans le style exact que tu veux (prêche, analyse foot, récit…). Une parole variée donne des intonations naturelles.</p>
+      <div id="analyzing" class="loading" hidden>Analyse de la voix en cours…</div>
+    </div>
+
+    <div class="step" data-step="2" hidden>
+      <div class="analysis" id="analysis"></div>
+      <div class="two">
+        <div class="mini">
+          <h4>Passage qui sera cloné</h4>
+          <audio id="aSample" controls preload="none"></audio>
+          <p class="muted small" id="sampleInfo"></p>
+        </div>
+        <div class="mini">
+          <h4>Extrait de renfort (moins de 8 s)</h4>
+          <audio id="aPrompt" controls preload="none"></audio>
+          <label class="field"><span>Écris exactement ce qui est dit dans cet extrait (optionnel mais conseillé : améliore la ressemblance et la stabilité)</span>
+            <textarea id="promptText" rows="2" placeholder="Ex. : Mes bien-aimés, aujourd'hui nous allons parler de la foi."></textarea></label>
+        </div>
+      </div>
+      <div class="row wrap">
+        <label class="field grow"><span>Nom de la voix</span><input id="voiceName" placeholder="Ex. : Père Ménas, Footwik, Imam…"></label>
+        <label class="field"><span>Langue principale</span>
+          <select id="voiceLang">
+            <option value="French" selected>Français</option>
+            <option value="auto">Automatique (français + arabe…)</option>
+            <option value="English">Anglais</option>
+            <option value="Arabic">Arabe</option>
+          </select></label>
+      </div>
+      <div class="checks">
+        <label><input type="checkbox" id="noiseRed"> Réduction de bruit MiniMax (si l'audio n'est pas parfaitement propre)</label>
+      </div>
+      <div class="actions">
+        <button class="btn ghost" id="btnBack1">Changer d'audio</button>
+        <button class="btn primary" id="btnClone">Cloner cette voix (~900 FCFA, une seule fois)</button>
+      </div>
+      <div id="cloning" class="loading" hidden>Clonage en cours chez MiniMax…</div>
+    </div>
+
+    <div class="step" data-step="3" hidden>
+      <p>La voix est clonée. Écoute ces 3 versions de la même phrase et choisis celle qui te ressemble le plus. Coût : environ 30 FCFA.</p>
+      <div id="testing" class="loading" hidden>Génération des 3 versions…</div>
+      <div id="variants" class="variants"></div>
+      <div class="actions"><button class="btn ghost small" id="btnRetest">Refaire le test</button></div>
+    </div>
+
+    <div class="step" data-step="4" hidden>
+      <div class="done-box">
+        <h3>Voix enregistrée</h3>
+        <p>Tu peux maintenant l'utiliser dans le Studio. Tu peux affiner ses réglages à tout moment dans « Mes voix ».</p>
+        <p class="warn small">Important : MiniMax supprime une voix clonée qui n'est pas utilisée pendant 7 jours. L'outil t'avertira avant.</p>
+        <button class="btn primary" data-goto="studio">Aller au Studio</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="voiceEditor" hidden>
+    <div class="card-head">
+      <h2 id="edTitle">Réglages de la voix</h2>
+      <button class="btn ghost small" id="btnCloseEditor">Fermer</button>
+    </div>
+    <div class="row wrap">
+      <label class="field grow"><span>Nom</span><input id="edName"></label>
+      <label class="field"><span>Mode</span>
+        <select id="edEmotion">
+          <option value="auto">Naturel (expressivité de l'échantillon)</option>
+          <option value="calm">Stable (calme, très régulier)</option>
+          <option value="happy">Chaleureux / joyeux</option>
+          <option value="sad">Grave / émouvant</option>
+          <option value="surprised">Étonné / dynamique</option>
+        </select></label>
+      <label class="field"><span>Langue</span>
+        <select id="edLang">
+          <option value="French">Français</option>
+          <option value="auto">Automatique</option>
+          <option value="English">Anglais</option>
+          <option value="Arabic">Arabe</option>
+        </select></label>
+    </div>
+    <div class="sliders">
+      <label>Vitesse <output id="oSpeed">1.00</output><input type="range" id="edSpeed" min="0.7" max="1.3" step="0.01" value="1"></label>
+      <label>Hauteur <output id="oPitch">0</output><input type="range" id="edPitch" min="-6" max="6" step="1" value="0"></label>
+      <label>Volume <output id="oVol">1.0</output><input type="range" id="edVol" min="0.5" max="2" step="0.1" value="1"></label>
+    </div>
+    <h4>Pauses (en secondes)</h4>
+    <div class="sliders">
+      <label>Après un point <output id="oP1"></output><input type="range" id="edPoint" min="0.2" max="1.5" step="0.05"></label>
+      <label>Après « ? » <output id="oP2"></output><input type="range" id="edQuestion" min="0.2" max="1.5" step="0.05"></label>
+      <label>Après « ! » <output id="oP3"></output><input type="range" id="edExcl" min="0.2" max="1.5" step="0.05"></label>
+      <label>Après « … » <output id="oP4"></output><input type="range" id="edSusp" min="0.2" max="2" step="0.05"></label>
+      <label>Entre paragraphes <output id="oP5"></output><input type="range" id="edPara" min="0.4" max="3" step="0.05"></label>
+      <label>Virgules renforcées <output id="oP6"></output><input type="range" id="edComma" min="0" max="0.6" step="0.05"></label>
+    </div>
+    <p class="muted small">« Virgules renforcées » à 0 : MiniMax gère les virgules lui-même. Monte un peu si la voix enchaîne trop vite.</p>
+    <div class="row wrap">
+      <label class="field grow"><span>Phrase de test</span><input id="edTestText" value="Mes bien-aimés, écoutez bien. Ce que je vais vous dire aujourd'hui est important !"></label>
+      <button class="btn ghost" id="btnEdTest">Écouter (~5 FCFA)</button>
+    </div>
+    <audio id="edAudio" controls preload="none" hidden></audio>
+    <div class="actions">
+      <button class="btn danger ghost small" id="btnEdDelete">Supprimer cette voix</button>
+      <button class="btn primary" id="btnEdSave">Enregistrer</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DICTIONNAIRE ===================== -->
+<section id="dico" class="panel">
+  <div class="card">
+    <div class="card-head">
+      <h2>Dictionnaire de prononciation</h2>
+      <span class="muted" id="dicoCount"></span>
+    </div>
+    <p class="muted">Écris un mot tel qu'il apparaît dans tes scripts, puis comment il doit être lu. Écris la lecture « comme ça se prononce » en français. Exemple : <b>PSG</b> → <b>pé èsse gé</b>. Il s'applique à toutes tes voix.</p>
+    <div class="dico-add">
+      <input id="dMot" placeholder="Mot écrit (ex. Ménas)">
+      <input id="dLecture" placeholder="Lecture (ex. Mé nasse)">
+      <button class="btn ghost" id="btnDTest">Écouter</button>
+      <button class="btn primary" id="btnDAdd">Ajouter</button>
+    </div>
+    <audio id="dAudio" controls preload="none" hidden></audio>
+    <div class="packs">
+      <span class="muted small">Ajouter des suggestions :</span>
+      <button class="chip" data-pack="foot">Foot</button>
+      <button class="chip" data-pack="islam">Islam</button>
+      <button class="chip" data-pack="chretien">Chrétien</button>
+    </div>
+    <input id="dSearch" class="search" placeholder="Rechercher dans le dictionnaire…">
+    <div id="dicoList" class="dico-list"></div>
+  </div>
+</section>
+
+<!-- ===================== RÉGLAGES ===================== -->
+<section id="reglages" class="panel">
+  <div class="card">
+    <h2>Clé API MiniMax</h2>
+    <p class="muted">Crée ta clé sur <a href="https://platform.minimax.io/user-center/basic-information/interface-key" target="_blank" rel="noopener">platform.minimax.io</a> (rubrique API Keys). Elle reste enregistrée dans ce navigateur et n'est envoyée qu'à MiniMax.</p>
+    <div class="row wrap">
+      <label class="field grow"><span>Clé API</span><input id="apiKey" type="password" placeholder="Colle ta clé ici (ou tape demo)" autocomplete="off"></label>
+      <label class="field"><span>Serveur</span>
+        <select id="apiBase">
+          <option value="https://api.minimax.io">International (recommandé)</option>
+          <option value="https://api-uw.minimax.io">États-Unis (ouest)</option>
+        </select></label>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" id="btnShowKey">Afficher</button>
+      <button class="btn primary" id="btnSaveKey">Enregistrer et vérifier</button>
+    </div>
+    <p id="keyStatus" class="status"></p>
+  </div>
+
+  <div class="card">
+    <h2>Sauvegarde</h2>
+    <p class="muted">Tes voix, réglages et dictionnaire sont gardés dans ce navigateur. Pour les retrouver sur un autre appareil (téléphone, autre PC), exporte-les puis importe le fichier là-bas.</p>
+    <div class="actions">
+      <button class="btn ghost" id="btnExport">Exporter mes réglages</button>
+      <label class="btn ghost">Importer<input type="file" id="importFile" accept=".json" hidden></label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Combien ça coûte ?</h2>
+    <table class="costs">
+      <tr><td>Cloner une voix (une seule fois)</td><td>~900 FCFA</td></tr>
+      <tr><td>Script de 15 000 caractères en HD (~15 min)</td><td>~900 FCFA</td></tr>
+      <tr><td>Le même en Turbo</td><td>~540 FCFA</td></tr>
+      <tr><td>Corriger un morceau raté</td><td>~15 à 25 FCFA</td></tr>
+    </table>
+    <p class="muted small">Tarifs officiels MiniMax : 100 $ par million de caractères (HD), 60 $ (Turbo), 1,50 $ par voix clonée. Conversion approximative 1 $ = 600 FCFA.</p>
+  </div>
+</section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
