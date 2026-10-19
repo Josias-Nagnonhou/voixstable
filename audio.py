@@ -497,16 +497,34 @@ def reference_from(metrics_list):
 # Assemblage final
 # ---------------------------------------------------------------------------
 
-def assemble(chunk_files, pauses, out_path, level_match=True):
-    """chunk_files: chemins mp3 ; pauses: secondes après chaque morceau.
+def speech_level(y, sr):
+    """Niveau de la parole seule (sans les silences), en dB."""
+    hop = int(sr * 0.02)
+    n = len(y) // hop
+    if n < 3:
+        return None
+    rms = np.sqrt(np.mean(y[:n * hop].reshape(n, hop) ** 2, axis=1) + 1e-12)
+    db = 20 * np.log10(rms + 1e-9)
+    loud = db[db > db.max() - 30]
+    return float(np.median(loud)) if len(loud) else None
 
-    Deux passages, un morceau à la fois : la mémoire reste faible même pour
-    une voix off de 30 minutes (important sur le plan gratuit de Render).
+
+TAIL = 0.12   # respiration gardée en fin de morceau (secondes)
+HEAD = 0.05   # attaque gardée en début de morceau
+
+
+def assemble(chunk_files, pauses, out_path, level_match=True):
+    """Assemble les morceaux en un seul MP3, le plus fluide possible.
+
+    - garde la petite respiration naturelle de fin de chaque morceau ;
+    - fondus doux à chaque jonction (pas de coupure sèche) ;
+    - volume harmonisé sur la parole seule, avec de petites corrections seulement ;
+    - un morceau à la fois en mémoire (plan gratuit de Render).
     """
     levels = []
     for f in chunk_files:
-        y = trim(decode(f, OUT_SR), OUT_SR, pad=0.03)
-        levels.append(20 * np.log10(np.sqrt(np.mean(y ** 2) + 1e-12)) if len(y) else None)
+        y = decode(f, OUT_SR)
+        levels.append(speech_level(y, OUT_SR) if len(y) else None)
         del y
     valid = [l for l in levels if l is not None]
     target = float(np.median(valid)) if valid else -20.0
@@ -516,23 +534,46 @@ def assemble(chunk_files, pauses, out_path, level_match=True):
         w.setsampwidth(2)
         w.setframerate(OUT_SR)
         w.writeframes(np.zeros(int(0.15 * OUT_SR), dtype=np.int16).tobytes())
-        for f, lvl, p in zip(chunk_files, levels, pauses):
+        last = len(chunk_files) - 1
+        for k, (f, lvl, p) in enumerate(zip(chunk_files, levels, pauses)):
             if lvl is None:
                 continue
-            y = trim(decode(f, OUT_SR), OUT_SR, pad=0.03)
+            y = decode(f, OUT_SR)
+            y = trim_soft(y, OUT_SR, HEAD, TAIL)
             if level_match:
-                y = y * (10 ** (np.clip(target - lvl, -6, 6) / 20))
-            fade = min(len(y) // 4, int(0.008 * OUT_SR))
-            if fade > 0:
-                ramp = np.linspace(0, 1, fade, dtype=np.float32)
-                y[:fade] *= ramp
-                y[-fade:] *= ramp[::-1]
+                diff = target - lvl
+                if abs(diff) > 1.0:
+                    y = y * (10 ** (float(np.clip(diff, -4, 4)) / 20))
+            fin = min(len(y) // 4, int(0.02 * OUT_SR))
+            fout = min(len(y) // 4, int(0.06 * OUT_SR))
+            if fin > 0:
+                y[:fin] *= np.linspace(0, 1, fin, dtype=np.float32)
+            if fout > 0:
+                y[-fout:] *= np.linspace(1, 0, fout, dtype=np.float32) ** 2
             w.writeframes((np.clip(y, -1, 1) * 32767).astype(np.int16).tobytes())
             del y
-            if p > 0:
-                w.writeframes(np.zeros(int(p * OUT_SR), dtype=np.int16).tobytes())
+            if k < last and p > 0:
+                gap = max(0.06, p - TAIL)
+                w.writeframes(np.zeros(int(gap * OUT_SR), dtype=np.int16).tobytes())
         w.writeframes(np.zeros(int(0.3 * OUT_SR), dtype=np.int16).tobytes())
     _run(["-i", tmp_wav, "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
           "-ar", str(OUT_SR), "-codec:a", "libmp3lame", "-b:a", "192k", "-y", out_path])
     os.remove(tmp_wav)
     return out_path
+
+
+def trim_soft(y, sr, head=0.05, tail=0.12):
+    """Retire les longs silences au début et à la fin, en gardant attaque et respiration."""
+    hop = int(sr * 0.01)
+    if len(y) < hop * 3:
+        return y
+    n = len(y) // hop
+    rms = np.sqrt(np.mean(y[:n * hop].reshape(n, hop) ** 2, axis=1) + 1e-12)
+    db = 20 * np.log10(rms + 1e-9)
+    thr = max(db.max() - 45, -65)
+    idx = np.where(db > thr)[0]
+    if len(idx) == 0:
+        return y[:0]
+    a = max(0, idx[0] * hop - int(head * sr))
+    b = min(len(y), (idx[-1] + 1) * hop + int(tail * sr))
+    return y[a:b].copy()

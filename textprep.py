@@ -301,7 +301,7 @@ def ending_of(sentence):
     return s[-1] if s else "."
 
 
-def make_chunks(prepared_text, max_chars=600, pauses=None, natural=True, english=None):
+def make_chunks(prepared_text, max_chars=1500, pauses=None, natural=True, english=None):
     """Découpe en morceaux de 1 à quelques phrases.
 
     Entre deux phrases d'un même morceau, on insère une pause MiniMax <#x#>
@@ -316,7 +316,7 @@ def make_chunks(prepared_text, max_chars=600, pauses=None, natural=True, english
         return {".": p["point"], "?": p["question"], "!": p["exclamation"],
                 "...": p["suspension"], ",": max(0.12, p["virgule"] or 0.18)}.get(end, p["point"])
 
-    paragraphs = [x.strip() for x in re.split(r"\n\s*\n|\n", prepared_text) if x.strip()]
+    paragraphs = [re.sub(r"\s*\n\s*", " ", x).strip() for x in re.split(r"\n\s*\n", prepared_text) if x.strip()]
     chunks = []
     for pi, para in enumerate(paragraphs):
         sentences = split_sentences(para)
@@ -338,9 +338,8 @@ def make_chunks(prepared_text, max_chars=600, pauses=None, natural=True, english
                 pieces.append(cur)
         group, glang = [], None
         for si, s in enumerate(pieces):
-            lang = sentence_lang(s, english.get("forced")) if english is not None else "fr"
-            kind = "en" if lang == "en" else "fr"
-            if group and (len(" ".join(group)) + len(s) + 1 > max_chars or kind != glang):
+            kind = "fr"
+            if group and len(" ".join(group)) + len(s) + 1 > max_chars:
                 chunks.append({"sentences": group, "paragraph": pi, "kind": glang})
                 group = []
             group.append(s)
@@ -367,10 +366,8 @@ def make_chunks(prepared_text, max_chars=600, pauses=None, natural=True, english
             p["paragraphe"] if is_para_end else pause_for(ending_of(last)))
         if english is None:
             lang = "fr"
-        elif c.get("kind") == "en":
-            lang = "en"
         else:
-            lang = "mixte" if english_spans(plain, english.get("forced")) else "fr"
+            lang = sentence_lang(plain, english.get("forced"))
         out.append({
             "index": i,
             "lang": lang,

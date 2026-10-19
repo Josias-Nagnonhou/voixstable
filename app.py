@@ -115,7 +115,7 @@ async def prepare(request: Request):
     b = await request.json()
     text = b.get("text", "")
     prepared = textprep.prepare(text, b.get("dictionary"), b.get("options"))
-    chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 600)), b.get("pauses"),
+    chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 1500)), b.get("pauses"),
                                   natural=b.get("pause_mode", "naturel") == "naturel", english=english_opt(b))
     chars = sum(c["chars"] for c in chunks)
     model = b.get("model", "speech-2.8-hd")
@@ -659,7 +659,7 @@ async def create_job(request: Request, x_api_key: str = Header(""), x_api_base: 
     chunks = b.get("chunks")
     if not chunks:
         prepared = textprep.prepare(b.get("text", ""), b.get("dictionary"), b.get("options"))
-        chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 600)), b.get("pauses"),
+        chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 1500)), b.get("pauses"),
                                       natural=b.get("pause_mode", "naturel") == "naturel", english=english_opt(b))
     if not chunks:
         raise HTTPException(400, "Le texte est vide.")
