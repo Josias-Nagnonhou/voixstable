@@ -330,3 +330,8 @@ audio { color-scheme: inherit; }
   .drow { grid-template-columns: 1fr; gap: 2px; }
   .drow .arrow { display: none; }
 }
+
+.voice .vprev { width: 100%; height: 38px; }
+.voice .actions .btn { flex: 0 0 auto; }
+.voice h3 { overflow-wrap: anywhere; }
+.voice .meta.small { overflow-wrap: anywhere; }

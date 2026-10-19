@@ -151,17 +151,38 @@ function renderVoices() {
     const mode = { auto: "Naturel", calm: "Stable", happy: "Chaleureux", sad: "Grave", surprised: "Dynamique" }[v.emotion || "auto"];
     return `<div class="voice">
       <div class="vhead"><div class="orb orb-mini" style="--h:${voiceHue(v.id)}deg"><span></span></div>
-      <div><h3>${esc(v.name)}</h3><div class="meta">${esc(v.analyse?.categorie || "Voix clonée")}</div></div></div>
+      <div><h3>${esc(v.name)}</h3><div class="meta">${v.imported ? `Voix du site MiniMax${v.createdLabel ? " · créée le " + esc(v.createdLabel) : ""}` : esc(v.analyse?.categorie || "Voix clonée")}</div></div></div>
       <div class="tags"><span class="badge">${mode}</span><span class="badge">Vitesse ${(v.speed ?? 1).toFixed(2)}</span>${exp}</div>
       <div class="meta small">ID MiniMax : ${esc(v.id)}</div>
+      <audio class="vprev" controls preload="none" hidden></audio>
       <div class="actions">
+        <button class="btn ghost small" data-listen="${esc(v.id)}">Écouter</button>
+        <button class="btn ghost small" data-rename="${esc(v.id)}">Renommer</button>
         <button class="btn primary small" data-use="${esc(v.id)}">Utiliser</button>
         <button class="btn ghost small" data-edit="${esc(v.id)}">Réglages</button>
       </div></div>`;
   }).join("");
   $$("[data-use]", list).forEach(b => b.onclick = () => { S.lastVoice = b.dataset.use; save(); renderVoiceSelect(); showTab("studio"); });
   $$("[data-edit]", list).forEach(b => b.onclick = () => openEditor(b.dataset.edit));
+  $$("[data-rename]", list).forEach(b => b.onclick = () => {
+    const v = voiceById(b.dataset.rename); if (!v) return;
+    const n = prompt("Nouveau nom pour cette voix :", v.name);
+    if (n && n.trim()) { v.name = n.trim().slice(0, 60); save(); renderVoices(); renderVoiceSelect(); toast("Voix renommée."); }
+  });
+  $$("[data-listen]", list).forEach(b => b.onclick = async () => {
+    const v = voiceById(b.dataset.listen); if (!v) return;
+    const card = b.closest(".voice"), a = $(".vprev", card);
+    b.disabled = true; b.textContent = "Génération…";
+    try {
+      const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(v), text: "Bonjour à tous. Aujourd'hui, je vais vous parler de quelque chose d'important. Écoutez bien.", pauses: v.pauses } });
+      v.usedOnce = true; v.lastUsed = Date.now(); save();
+      a.hidden = false; a.src = r.url; a.play().catch(() => {});
+    } catch (e) { toast(e.message, true, 6000); }
+    finally { b.disabled = false; b.textContent = "Écouter"; }
+  });
 }
+function siteVoiceNumber() { return S.voices.filter(v => v.imported).length + 1; }
+function frDate(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ""); return m ? `${m[3]}/${m[2]}/${m[1]}` : ""; }
 
 $("#voiceSelect").addEventListener("change", () => { S.lastVoice = $("#voiceSelect").value; save(); renderOrb(); });
 $("#modelSelect").addEventListener("change", () => { S.model = $("#modelSelect").value; save(); updateEstimate(); syncModelSeg(); });
@@ -279,12 +300,15 @@ $("#btnSync").onclick = async () => {
   try {
     const r = await api("/api/voices");
     let added = 0;
-    for (const v of r.voices) {
-      if (!voiceById(v.voice_id)) {
-        S.voices.push({ id: v.voice_id, name: (v.description && v.description[0]) || v.voice_id, emotion: "auto", speed: 1, vol: 1, pitch: 0,
-                        lang: "French", pauses: { ...DEFAULT_PAUSES }, created: Date.now(), lastUsed: Date.now() });
-        added++;
-      }
+    const sorted = [...r.voices].sort((a, b) => String(b.created_time || "").localeCompare(String(a.created_time || "")));
+    for (const v of sorted) {
+      const ex = voiceById(v.voice_id);
+      if (ex) { if (ex.imported && !ex.createdLabel) ex.createdLabel = frDate(v.created_time); continue; }
+      const desc = v.description && v.description[0];
+      S.voices.push({ id: v.voice_id, name: desc || `Voix du site n°${siteVoiceNumber()}`, imported: true, usedOnce: true,
+                      createdLabel: frDate(v.created_time), emotion: "auto", speed: 1, vol: 1, pitch: 0,
+                      lang: "French", pauses: { ...DEFAULT_PAUSES }, created: Date.now(), lastUsed: Date.now() });
+      added++;
     }
     if (!r.voices.length) {
       const id = prompt("Aucune voix trouvée automatiquement (MiniMax ne liste une voix qu'après sa première utilisation).\nSi tu connais l'identifiant d'une voix clonée, colle-le ici :");
@@ -295,7 +319,7 @@ $("#btnSync").onclick = async () => {
       }
     }
     save(); renderVoices(); renderVoiceSelect();
-    toast(added ? `${added} voix ajoutée(s).` : "Toutes tes voix sont déjà là.");
+    toast(added ? `${added} voix ajoutée(s). Clique sur « Écouter » pour les reconnaître, puis « Renommer ».` : "Toutes tes voix sont déjà là.", false, 6000);
   } catch (e) { toast(e.message, true, 6000); }
 };
 
@@ -343,8 +367,8 @@ $("#btnEdTest").onclick = async () => {
   finally { $("#btnEdTest").disabled = false; }
 };
 $("#btnEdDelete").onclick = async () => {
-  if (!confirm(`Supprimer la voix « ${E.name} » de l'outil ?`)) return;
-  if (confirm("La supprimer aussi définitivement de ton compte MiniMax ?\n(OK = oui, Annuler = la garder chez MiniMax)")) {
+  if (!confirm(`Retirer la voix « ${E.name} » de l'outil ?` + (E.imported ? "\n\nElle reste sur ton compte MiniMax : tu pourras la retrouver avec « Retrouver mes voix MiniMax »." : ""))) return;
+  if (!E.imported && confirm("La supprimer aussi définitivement de ton compte MiniMax ?\n(OK = oui, Annuler = la garder chez MiniMax)")) {
     try { await api("/api/voices/delete", { method: "POST", body: { voice_id: E.id } }); }
     catch (e) { toast("Supprimée de l'outil, mais pas chez MiniMax : " + e.message, true, 6000); }
   }
@@ -620,6 +644,15 @@ $("#importFile").addEventListener("change", async e => {
 
 /* ---------------- Démarrage ---------------- */
 load();
+(() => {
+  let k = S.voices.filter(v => v.imported).length;
+  S.voices.forEach(v => {
+    if (!v.imported && v.name === v.id && /^moss_audio_/.test(v.id)) {
+      v.imported = true; v.usedOnce = true; v.name = `Voix du site n°${++k}`;
+    }
+  });
+  save();
+})();
 script.value = S.script || "";
 $("#apiKey").value = S.apiKey || "";
 $("#apiBase").value = S.base || "https://api.minimax.io";
