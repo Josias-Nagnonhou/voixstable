@@ -470,17 +470,16 @@ def reference_from(metrics_list):
 # ---------------------------------------------------------------------------
 
 def assemble(chunk_files, pauses, out_path, level_match=True):
-    """chunk_files: chemins mp3 ; pauses: secondes après chaque morceau."""
-    decoded = []
+    """chunk_files: chemins mp3 ; pauses: secondes après chaque morceau.
+
+    Deux passages, un morceau à la fois : la mémoire reste faible même pour
+    une voix off de 30 minutes (important sur le plan gratuit de Render).
+    """
     levels = []
     for f in chunk_files:
         y = trim(decode(f, OUT_SR), OUT_SR, pad=0.03)
-        decoded.append(y)
-        if len(y):
-            rms = np.sqrt(np.mean(y ** 2) + 1e-12)
-            levels.append(20 * np.log10(rms))
-        else:
-            levels.append(None)
+        levels.append(20 * np.log10(np.sqrt(np.mean(y ** 2) + 1e-12)) if len(y) else None)
+        del y
     valid = [l for l in levels if l is not None]
     target = float(np.median(valid)) if valid else -20.0
     tmp_wav = out_path + ".wav"
@@ -489,19 +488,19 @@ def assemble(chunk_files, pauses, out_path, level_match=True):
         w.setsampwidth(2)
         w.setframerate(OUT_SR)
         w.writeframes(np.zeros(int(0.15 * OUT_SR), dtype=np.int16).tobytes())
-        for y, lvl, p in zip(decoded, levels, pauses):
-            if len(y) == 0:
+        for f, lvl, p in zip(chunk_files, levels, pauses):
+            if lvl is None:
                 continue
-            if level_match and lvl is not None:
-                g = np.clip(target - lvl, -6, 6)
-                y = y * (10 ** (g / 20))
+            y = trim(decode(f, OUT_SR), OUT_SR, pad=0.03)
+            if level_match:
+                y = y * (10 ** (np.clip(target - lvl, -6, 6) / 20))
             fade = min(len(y) // 4, int(0.008 * OUT_SR))
             if fade > 0:
-                ramp = np.linspace(0, 1, fade)
-                y = y.copy()
+                ramp = np.linspace(0, 1, fade, dtype=np.float32)
                 y[:fade] *= ramp
                 y[-fade:] *= ramp[::-1]
             w.writeframes((np.clip(y, -1, 1) * 32767).astype(np.int16).tobytes())
+            del y
             if p > 0:
                 w.writeframes(np.zeros(int(p * OUT_SR), dtype=np.int16).tobytes())
         w.writeframes(np.zeros(int(0.3 * OUT_SR), dtype=np.int16).tobytes())

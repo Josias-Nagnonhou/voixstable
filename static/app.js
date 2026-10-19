@@ -67,6 +67,7 @@ function voicePayload(v, model) {
   return { voice_id: v.id, emotion: v.emotion || "auto", speed: v.speed ?? 1, vol: v.vol ?? 1, pitch: v.pitch ?? 0,
            language_boost: v.lang || "French", model: model || $("#modelSelect").value };
 }
+function wasUsed(v) { return !!(v.usedOnce || v.ref); }
 function daysSince(ts) { return ts ? (Date.now() - ts) / 86400000 : 99; }
 
 function renderVoiceSelect() {
@@ -142,10 +143,10 @@ function renderVoices() {
     return;
   }
   list.innerHTML = S.voices.map(v => {
-    const d = daysSince(v.lastUsed || v.created);
+    const d = daysSince(v.created);
     const left = Math.max(0, Math.ceil(7 - d));
-    const exp = d >= 5
-      ? `<span class="badge bad">À utiliser sous ${left} j, sinon MiniMax la supprime</span>`
+    const exp = !wasUsed(v) && d >= 4
+      ? `<span class="badge bad">Jamais utilisée : à utiliser sous ${left} j, sinon MiniMax la supprime</span>`
       : `<span class="badge ok">Active</span>`;
     const mode = { auto: "Naturel", calm: "Stable", happy: "Chaleureux", sad: "Grave", surprised: "Dynamique" }[v.emotion || "auto"];
     return `<div class="voice">
@@ -254,7 +255,7 @@ async function runVariants() {
   try {
     const r = await api("/api/test-variants", { method: "POST", body: {
       voice_id: W.voice.id, model: $("#modelSelect").value, language_boost: W.voice.lang, dictionary: S.dictionary } });
-    W.voice.lastUsed = Date.now(); save();
+    W.voice.lastUsed = Date.now(); W.voice.usedOnce = true; save();
     $("#variants").innerHTML = r.variants.map(v => `
       <div class="variant">
         <b>${esc(v.label)}</b>
@@ -336,7 +337,7 @@ $("#btnEdTest").onclick = async () => {
   $("#btnEdTest").disabled = true;
   try {
     const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(tmp), text: $("#edTestText").value, dictionary: S.dictionary, pauses: tmp.pauses } });
-    E.lastUsed = Date.now(); save();
+    E.lastUsed = Date.now(); E.usedOnce = true; save();
     const a = $("#edAudio"); a.hidden = false; a.src = r.url; a.play().catch(() => {});
   } catch (e) { toast(e.message, true, 6000); }
   finally { $("#btnEdTest").disabled = false; }
@@ -406,7 +407,7 @@ $("#btnGenerate").onclick = async () => {
     const r = await api("/api/jobs", { method: "POST", body: {
       chunks: prep.chunks, voice: voicePayload(v), ref: v.ref || {}, threshold: +$("#threshold").value,
       max_retries: +$("#retries").value } });
-    v.lastUsed = Date.now(); S.lastJob = r.id; save(); renderVoices();
+    v.lastUsed = Date.now(); v.usedOnce = true; S.lastJob = r.id; save(); renderVoices();
     startPolling(r.id, true);
   } catch (e) { toast(e.message, true, 6000); }
   finally { $("#btnGenerate").disabled = false; }
@@ -579,6 +580,7 @@ $("#btnDTest").onclick = async () => {
   if (lecture) dict.push({ mot, lecture });
   try {
     const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(v), text: `Écoutez bien ce mot : ${mot}. Encore une fois : ${mot}.`, dictionary: dict } });
+    v.usedOnce = true; v.lastUsed = Date.now(); save();
     const a = $("#dAudio"); a.hidden = false; a.src = r.url; a.play().catch(() => {});
   } catch (e) { toast(e.message, true, 6000); }
 };
@@ -624,6 +626,6 @@ $("#apiBase").value = S.base || "https://api.minimax.io";
 $("#modelSelect").value = S.model || "speech-2.8-hd"; syncModelSeg();
 banners(); renderVoiceSelect(); renderVoices(); renderDico(); updateEstimate();
 if (S.lastJob) startPolling(S.lastJob, false);
-const old = S.voices.filter(v => daysSince(v.lastUsed || v.created) >= 5);
-if (old.length) setTimeout(() => toast(`Attention : ${old.map(v => v.name).join(", ")} doit être utilisée bientôt, sinon MiniMax la supprime (7 jours sans usage).`, true, 9000), 800);
+const old = S.voices.filter(v => !wasUsed(v) && daysSince(v.created) >= 4);
+if (old.length) setTimeout(() => toast(`Attention : ${old.map(v => v.name).join(", ")} n'a jamais été utilisée. Fais-lui lire une phrase avant 7 jours après le clonage, sinon MiniMax la supprime.`, true, 9000), 800);
 })();
