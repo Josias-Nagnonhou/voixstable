@@ -98,13 +98,25 @@ async def mm_error(request, exc):
 # Texte
 # ---------------------------------------------------------------------------
 
+def english_opt(b):
+    """Réglage « lire l'anglais en anglais » envoyé par la page."""
+    if b.get("english", True) is False:
+        return None
+    forced = [w.strip() for w in (b.get("english_words") or []) if str(w).strip()][:200]
+    return {"forced": forced}
+
+
+LANG_BOOST = {"en": "English", "mixte": "auto"}
+ASR_FOR = {"en": "en", "mixte": ""}
+
+
 @app.post("/api/prepare")
 async def prepare(request: Request):
     b = await request.json()
     text = b.get("text", "")
     prepared = textprep.prepare(text, b.get("dictionary"), b.get("options"))
     chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 600)), b.get("pauses"),
-                                  natural=b.get("pause_mode", "naturel") == "naturel")
+                                  natural=b.get("pause_mode", "naturel") == "naturel", english=english_opt(b))
     chars = sum(c["chars"] for c in chunks)
     model = b.get("model", "speech-2.8-hd")
     return {
@@ -298,13 +310,20 @@ async def speak(request: Request, x_api_key: str = Header(""), x_api_base: str =
     text = textprep.prepare((b.get("text") or "")[:600], b.get("dictionary"))
     if not text:
         raise HTTPException(400, "Texte vide.")
-    chunks = textprep.make_chunks(text, 2000, b.get("pauses"), natural=b.get("pause_mode", "naturel") == "naturel")
+    chunks = textprep.make_chunks(text, 2000, b.get("pauses"), natural=b.get("pause_mode", "naturel") == "naturel",
+                                  english=english_opt(b))
     mm = " ".join(c["minimax_text"] for c in chunks)
+    langs = {c.get("lang", "fr") for c in chunks}
+    boost = v.get("language_boost", "French")
+    if langs == {"en"}:
+        boost = "English"
+    elif langs & {"en", "mixte"}:
+        boost = "auto"
     model = v.get("model", "speech-2.8-hd")
     data, extra = await run_blocking(cl.tts, mm, v["voice_id"], model=model,
                                      speed=v.get("speed", 1.0), vol=v.get("vol", 1.0),
                                      pitch=v.get("pitch", 0), emotion=v.get("emotion", "auto"),
-                                     language_boost=v.get("language_boost", "French"))
+                                     language_boost=boost)
     tid = uuid.uuid4().hex[:12]
     d = os.path.join(SAMPLES, "t" + tid)
     os.makedirs(d)
@@ -370,6 +389,7 @@ class Job:
         self.asr_seconds = 0.0
         self.asr_note = None
         self.dictionary = b.get("dictionary") or []
+        self.english = english_opt(b)
         self.pause_mode = b.get("pause_mode", "naturel")
         self.title = (b.get("title") or "voix-off").strip()[:100]
         self.voice_name = (b.get("voice_name") or "").strip()[:80]
@@ -383,7 +403,7 @@ class Job:
         if not self.asr or a["metrics"].get("vide"):
             return
         try:
-            heard, dur = self.cl.transcribe(a["file"], self.asr_lang)
+            heard, dur = self.cl.transcribe(a["file"], ASR_FOR.get(c.get("lang"), self.asr_lang))
         except MiniMaxError as e:
             self.asr = False
             self.asr_note = f"Réécoute automatique désactivée pour cette génération : {e}"
@@ -407,7 +427,7 @@ class Job:
         data, extra = self.cl.tts(c["minimax_text"], v["voice_id"], model=self.model,
                                   speed=v.get("speed", 1.0), vol=v.get("vol", 1.0),
                                   pitch=v.get("pitch", 0), emotion=v.get("emotion", "auto"),
-                                  language_boost=v.get("language_boost", "French"),
+                                  language_boost=LANG_BOOST.get(c.get("lang"), v.get("language_boost", "French")),
                                   normalization=self.normalization)
         n = len(c["attempts"]) + 1
         path = os.path.join(self.dir, f"m{i:04d}_{n}.mp3")
@@ -633,7 +653,7 @@ async def create_job(request: Request, x_api_key: str = Header(""), x_api_base: 
     if not chunks:
         prepared = textprep.prepare(b.get("text", ""), b.get("dictionary"), b.get("options"))
         chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 600)), b.get("pauses"),
-                                      natural=b.get("pause_mode", "naturel") == "naturel")
+                                      natural=b.get("pause_mode", "naturel") == "naturel", english=english_opt(b))
     if not chunks:
         raise HTTPException(400, "Le texte est vide.")
     if not b.get("voice", {}).get("voice_id"):
@@ -675,8 +695,10 @@ async def chunk_regen(jid: str, i: int, request: Request, x_api_key: str = Heade
     text = b.get("text")
     if text is not None:
         text = textprep.prepare(text, b.get("dictionary"))
-        mm = textprep.make_chunks(text, 10000, natural=j.pause_mode == "naturel")
+        mm = textprep.make_chunks(text, 10000, natural=j.pause_mode == "naturel", english=j.english)
         text_mm = " ".join(c["minimax_text"] for c in mm) if mm else text
+        ls = {x.get("lang", "fr") for x in mm}
+        new_lang = "en" if ls == {"en"} else ("mixte" if ls & {"en", "mixte"} else "fr")
     c = j.chunks[i]
     c["locked"] = False
     c["status"] = "correction"
@@ -684,6 +706,7 @@ async def chunk_regen(jid: str, i: int, request: Request, x_api_key: str = Heade
     def work():
         if text is not None:
             c["text"], c["minimax_text"], c["chars"] = text, text_mm, len(text)
+            c["lang"] = new_lang
         j.attempt(i)
         j.score_attempt(i, c["attempts"][-1], j.max_pause(i))
         # un regen manuel : on prend le nouvel essai d'office

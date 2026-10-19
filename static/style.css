@@ -395,3 +395,8 @@ audio { color-scheme: inherit; }
 .spend { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 8px 12px; border-radius: 12px; background: var(--field); font-size: .86rem; }
 .spend span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .banner.low { border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); background: var(--bad-bg); }
+
+mark.en { background: color-mix(in srgb, var(--v2) 22%, transparent); color: inherit; border-radius: 5px; padding: 0 3px; }
+.langtag { display: inline-block; font-size: .7rem; font-weight: 600; padding: 2px 8px; border-radius: 7px; margin-right: 6px; }
+.langtag.en { background: color-mix(in srgb, var(--v2) 20%, transparent); color: var(--accent-ink); }
+.langtag.mix { background: color-mix(in srgb, var(--v2) 12%, transparent); color: var(--muted); }

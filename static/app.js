@@ -31,6 +31,7 @@ async function api(path, { method = "GET", body, form } = {}) {
   let payload;
   if (form) payload = form;
   else if (body !== undefined) { headers["Content-Type"] = "application/json"; payload = JSON.stringify(body); }
+  if (body && path === "/api/speak" && body.english === undefined) { body = { ...body, ...englishOpts() }; payload = JSON.stringify(body); }
   const r = await fetch(path, { method, headers, body: payload });
   let data = null;
   try { data = await r.json(); } catch (e) { /* vide */ }
@@ -519,9 +520,12 @@ function updateEstimate() {
 function genOptions() {
   return { chiffres: $("#optChiffres").checked, abreviations: $("#optAbrev").checked, tirets: $("#optTirets").checked };
 }
+function englishOpts() {
+  return { english: $("#optEn").checked, english_words: (S.enWords || "").split(",").map(x => x.trim()).filter(Boolean) };
+}
 async function prepareText() {
   const v = currentVoice();
-  return api("/api/prepare", { method: "POST", body: {
+  return api("/api/prepare", { method: "POST", body: { ...englishOpts(),
     text: script.value, dictionary: S.dictionary, options: genOptions(), max_chars: +$("#maxChars").value,
     pauses: (v && v.pauses) || DEFAULT_PAUSES, pause_mode: pauseMode(v), model: $("#modelSelect").value } });
 }
@@ -531,8 +535,10 @@ function renderPreview(r) {
   $("#changes").innerHTML = r.changes.length
     ? r.changes.map(c => `<span class="change"><s>${esc(c.avant) || "∅"}</s> → <b>${esc(c.apres) || "∅"}</b></span>`).join("")
     : `<span class="muted small">Aucune correction nécessaire.</span>`;
+  const LANGTAG = { en: `<span class="langtag en">Lu en anglais</span>`, mixte: `<span class="langtag mix">Français + anglais</span>` };
+  const markEn = (html, words) => (words || []).reduce((h, w) => h.split(esc(w)).join(`<mark class="en">${esc(w)}</mark>`), html);
   $("#chunksPreview").innerHTML = r.chunks.map(c =>
-    `<div class="cp"><span class="num">#${c.index + 1}</span>${esc(c.minimax_text).replace(/&lt;#([\d.]+)#&gt;/g, '<span class="pause">pause $1 s</span>')}${c.pause_after ? `<span class="pause">${pauseMode(currentVoice()) === "naturel" ? "pause naturelle" : "puis " + c.pause_after + " s"}</span>` : ""}</div>`).join("");
+    `<div class="cp"><span class="num">#${c.index + 1}</span>${LANGTAG[c.lang] || ""}${markEn(esc(c.minimax_text), c.english).replace(/&lt;#([\d.]+)#&gt;/g, '<span class="pause">pause $1 s</span>')}${c.pause_after ? `<span class="pause">${pauseMode(currentVoice()) === "naturel" ? "pause naturelle" : "puis " + c.pause_after + " s"}</span>` : ""}</div>`).join("");
 }
 $("#btnPreview").onclick = async () => {
   if (!script.value.trim()) { toast("Colle d'abord ton script.", true); return; }
@@ -553,7 +559,7 @@ $("#btnGenerate").onclick = async () => {
     renderPreview(prep);
     const r = await api("/api/jobs", { method: "POST", body: {
       chunks: prep.chunks, voice: voicePayload(v), ref: v.ref || {}, threshold: +$("#threshold").value,
-      asr: $("#optAsr").checked, dictionary: S.dictionary, pause_mode: pauseMode(v),
+      asr: $("#optAsr").checked, dictionary: S.dictionary, pause_mode: pauseMode(v), ...englishOpts(),
       title: fileTitle(script.value), voice_name: v.name,
       max_retries: +$("#retries").value } });
     v.lastUsed = Date.now(); v.usedOnce = true; S.lastJob = r.id;
@@ -944,6 +950,8 @@ $("#chipQua").onclick = () => {
 };
 
 /* ---------------- Réglages ---------------- */
+$("#enWords").value = S.enWords || "";
+$("#enWords").addEventListener("input", () => { S.enWords = $("#enWords").value; save(); });
 $("#btnBalSave").onclick = () => {
   const v = parseFloat(String($("#balInput").value).replace(",", "."));
   if (!(v >= 0)) { toast("Écris le montant en dollars affiché sur MiniMax (exemple : 25 ou 23,40).", true); return; }
@@ -998,6 +1006,7 @@ $("#apiKey").value = S.apiKey || "";
 $("#apiBase").value = S.base || "https://api.minimax.io";
 $("#modelSelect").value = S.model || "speech-2.8-hd"; syncModelSeg();
 banners(); renderVoiceSelect(); renderVoices(); renderDico(); updateEstimate(); renderHistory(); renderBalance();
+$("#enWords").value = S.enWords || "";
 if (S.lastJob) startPolling(S.lastJob, false);
 if (location.hash === "#historique") { showTab("historique"); history.replaceState(null, "", location.pathname); }
 const old = S.voices.filter(v => !wasUsed(v) && daysSince(v.created) >= 4);

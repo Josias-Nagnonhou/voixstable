@@ -301,7 +301,7 @@ def ending_of(sentence):
     return s[-1] if s else "."
 
 
-def make_chunks(prepared_text, max_chars=600, pauses=None, natural=True):
+def make_chunks(prepared_text, max_chars=600, pauses=None, natural=True, english=None):
     """Découpe en morceaux de 1 à quelques phrases.
 
     Entre deux phrases d'un même morceau, on insère une pause MiniMax <#x#>
@@ -336,14 +336,17 @@ def make_chunks(prepared_text, max_chars=600, pauses=None, natural=True):
                     cur = (cur + " " + part).strip()
             if cur:
                 pieces.append(cur)
-        group = []
+        group, glang = [], None
         for si, s in enumerate(pieces):
-            if group and len(" ".join(group)) + len(s) + 1 > max_chars:
-                chunks.append({"sentences": group, "paragraph": pi})
+            lang = sentence_lang(s, english.get("forced")) if english is not None else "fr"
+            kind = "en" if lang == "en" else "fr"
+            if group and (len(" ".join(group)) + len(s) + 1 > max_chars or kind != glang):
+                chunks.append({"sentences": group, "paragraph": pi, "kind": glang})
                 group = []
             group.append(s)
+            glang = kind
         if group:
-            chunks.append({"sentences": group, "paragraph": pi})
+            chunks.append({"sentences": group, "paragraph": pi, "kind": glang})
 
     out = []
     for i, c in enumerate(chunks):
@@ -362,8 +365,16 @@ def make_chunks(prepared_text, max_chars=600, pauses=None, natural=True):
         is_para_end = i == len(chunks) - 1 or chunks[i + 1]["paragraph"] != c["paragraph"]
         pause_after = 0.0 if i == len(chunks) - 1 else (
             p["paragraphe"] if is_para_end else pause_for(ending_of(last)))
+        if english is None:
+            lang = "fr"
+        elif c.get("kind") == "en":
+            lang = "en"
+        else:
+            lang = "mixte" if english_spans(plain, english.get("forced")) else "fr"
         out.append({
             "index": i,
+            "lang": lang,
+            "english": [plain[a:b] for a, b in english_spans(plain, english.get("forced"))] if english is not None else [],
             "text": plain,
             "minimax_text": joined,
             "chars": len(plain),
@@ -436,3 +447,85 @@ def heard_coverage(expected, heard, dictionary=None):
             if not ok:
                 missing.extend(seg_a)
     return {"coverage": round(matched / len(a), 3), "missing": missing[:12]}
+
+
+# ---------------------------------------------------------------------------
+# Repérage de l'anglais dans un texte français
+# ---------------------------------------------------------------------------
+
+_EN_FORCE = {"the", "of", "and", "is", "are", "you", "your", "my", "this", "that", "with", "for",
+             "what", "who", "we", "they", "it's", "i'm", "don't", "can't", "be", "was", "were",
+             "have", "has", "will", "would", "should", "could", "from", "by", "at", "to", "in",
+             "on", "off", "out", "up", "one", "two", "all", "only", "just", "love", "god", "lord"}
+_FR_KEEP = {"match", "football", "coach", "manager", "week", "end", "weekend", "ok", "super", "top",
+            "star", "fan", "fans", "club", "but", "penalty", "corner", "dribble", "tacle", "goal",
+            "sprint", "stop", "parking", "mail", "email", "internet", "web", "live", "show", "business",
+            "marketing", "jesus", "amen", "real", "madrid", "barcelona", "chelsea", "arsenal", "a", "me",
+            "on", "en", "se", "son", "pour", "par", "est", "plus", "tout", "sur", "pas", "ne", "ce"}
+_WORD = re.compile(r"[A-Za-z][A-Za-z'’]*")
+
+
+def _en_score(w):
+    try:
+        from wordfreq import zipf_frequency
+    except Exception:
+        return 0.0
+    lw = w.lower().replace("’", "'")
+    if lw in _FR_KEEP:
+        return -9.0
+    en, fr = zipf_frequency(lw, "en"), zipf_frequency(lw, "fr")
+    if lw in _EN_FORCE and en >= 4:
+        return 3.0
+    if en < 3.3:
+        return -9.0
+    return en - fr
+
+
+def english_spans(text, forced=None):
+    """Repère les passages en anglais. Renvoie une liste de (début, fin) en caractères."""
+    spans = []
+    for f in forced or []:
+        f = f.strip()
+        if f:
+            for m in re.finditer(r"(?<![\wÀ-ÿ])" + re.escape(f) + r"(?![\wÀ-ÿ])", text, re.I):
+                spans.append((m.start(), m.end()))
+    toks = []
+    for m in re.finditer(r"[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’]*", text):
+        w = m.group(0)
+        accented = bool(re.search(r"[À-ÿ]", w))
+        sc = -9.0 if accented or len(w) < 2 else _en_score(w)
+        toks.append((m.start(), m.end(), w, sc))
+    i = 0
+    while i < len(toks):
+        if toks[i][3] >= 1.0:
+            j = i
+            while j + 1 < len(toks) and toks[j + 1][3] >= 0.6 and \
+                    not re.search(r"[.!?;:]", text[toks[j][1]:toks[j + 1][0]]):
+                j += 1
+            run = toks[i:j + 1]
+            strong = [t for t in run if t[3] >= 1.0]
+            if len(run) >= 2 and len(strong) >= 1 and sum(t[3] for t in run) / len(run) >= 1.0:
+                spans.append((run[0][0], run[-1][1]))
+            elif len(run) == 1 and run[0][3] >= 1.5 and len(run[0][2]) >= 4:
+                spans.append((run[0][0], run[0][1]))
+            i = j + 1
+        else:
+            i += 1
+    spans.sort()
+    merged = []
+    for a, b in spans:
+        if merged and a <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(b, merged[-1][1]))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def sentence_lang(sentence, forced=None):
+    """'en' si la phrase est surtout en anglais, 'mixte' si elle contient de l'anglais, sinon 'fr'."""
+    spans = english_spans(sentence, forced)
+    if not spans:
+        return "fr"
+    letters = len(re.findall(r"[A-Za-zÀ-ÿ]", sentence)) or 1
+    en_letters = sum(len(re.findall(r"[A-Za-zÀ-ÿ]", sentence[a:b])) for a, b in spans)
+    return "en" if en_letters / letters >= 0.6 else "mixte"
