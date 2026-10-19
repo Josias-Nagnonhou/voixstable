@@ -390,6 +390,7 @@ class Job:
         self.asr_note = None
         self.dictionary = b.get("dictionary") or []
         self.english = english_opt(b)
+        self.review = bool(b.get("review", False))
         self.pause_mode = b.get("pause_mode", "naturel")
         self.title = (b.get("title") or "voix-off").strip()[:100]
         self.voice_name = (b.get("voice_name") or "").strip()[:80]
@@ -499,6 +500,7 @@ class Job:
                 try:
                     self.attempt(i)
                     self.chunks[i]["status"] = "genere"
+                    self.chunks[i]["best"] = self.chunks[i]["attempts"][-1]["n"]
                 except MiniMaxError as e:
                     self.chunks[i]["status"] = "erreur"
                     self.chunks[i]["issues"] = [str(e)]
@@ -545,6 +547,10 @@ class Job:
             if self.cancel:
                 self.status = "annule"
                 self.phase = "Annulé"
+                return
+            if self.review:
+                self.status = "a_valider"
+                self.phase = "Toutes les parties sont prêtes : écoute-les, refais celles qui ne vont pas, puis assemble"
                 return
             self.phase = "Assemblage final"
             self.assemble()
@@ -618,10 +624,11 @@ class Job:
         chunks = []
         for c in self.chunks:
             chunks.append({
-                "index": c["index"], "text": c["text"], "chars": c["chars"],
+                "index": c["index"], "text": c["text"], "chars": c["chars"], "pause_after": c.get("pause_after", 0.4),
                 "status": c["status"], "score": c["score"], "issues": c["issues"],
                 "best": c["best"], "locked": c.get("locked", False),
                 "attempts": [{"n": a["n"], "score": a["score"], "issues": a["issues"],
+                              "duree": (a.get("metrics") or {}).get("duree"),
                               "url": f"/api/jobs/{self.id}/chunk/{c['index']}/{a['n']}.mp3"}
                              for a in c["attempts"]],
             })
@@ -738,8 +745,9 @@ async def chunk_choose(jid: str, i: int, request: Request):
 async def job_assemble(jid: str):
     j = get_job(jid)
     await run_blocking(j.assemble)
-    if j.status in ("annule",):
+    if j.status in ("annule", "a_valider"):
         j.status = "termine"
+        j.phase = "Terminé"
     return j.public()
 
 

@@ -98,6 +98,7 @@
             <label><input type="checkbox" id="optChiffres" checked> Chiffres en lettres</label>
             <label><input type="checkbox" id="optAbrev" checked> Développer les abréviations</label>
             <label><input type="checkbox" id="optTirets" checked> Corriger les tirets (peut-être, a-t-il)</label>
+            <label><input type="checkbox" id="optReview" checked> Me laisser écouter chaque partie avant d'assembler la voix off</label>
             <label><input type="checkbox" id="optEn" checked> Lire les mots et phrases en anglais avec l'accent anglais (repérage automatique)</label>
             <label><input type="checkbox" id="optAsr" checked> Réécoute automatique : vérifie qu'aucun mot n'est sauté ou mal lu (~4 FCFA par minute de voix)</label>
           </div>
@@ -139,6 +140,16 @@
       <div><b id="stCheck">0</b><span>à écouter</span></div>
       <div><b id="stRegen">0</b><span>corrigés auto</span></div>
       <div><b id="stCost">0</b><span>FCFA dépensés</span></div>
+    </div>
+    <div id="reviewBox" class="review" hidden>
+      <div>
+        <h3>Écoute avant d'assembler</h3>
+        <p class="muted small" id="reviewInfo" style="margin:0"></p>
+      </div>
+      <div class="final-actions">
+        <button class="btn ghost" id="btnPlayAllParts">Tout écouter d'affilée</button>
+        <button class="btn primary" id="btnAssemble">Assembler la voix off</button>
+      </div>
     </div>
     <div id="finalBox" class="final" hidden>
       <div>

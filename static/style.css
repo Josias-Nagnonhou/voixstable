@@ -400,3 +400,14 @@ mark.en { background: color-mix(in srgb, var(--v2) 22%, transparent); color: inh
 .langtag { display: inline-block; font-size: .7rem; font-weight: 600; padding: 2px 8px; border-radius: 7px; margin-right: 6px; }
 .langtag.en { background: color-mix(in srgb, var(--v2) 20%, transparent); color: var(--accent-ink); }
 .langtag.mix { background: color-mix(in srgb, var(--v2) 12%, transparent); color: var(--muted); }
+
+.playbtn { width: 40px; height: 40px; border-radius: 50%; border: 0; display: grid; place-items: center; cursor: pointer; color: #fff; background: linear-gradient(135deg, var(--v1), var(--v3)); box-shadow: 0 8px 20px rgba(109, 74, 255, .3); flex: none; }
+.playbtn .i-pause { display: none; }
+.playbtn.on .i-play { display: none; }
+.playbtn.on .i-pause { display: block; }
+.cprog { height: 4px; border-radius: 99px; background: var(--led-off); overflow: hidden; margin-top: 10px; }
+.cprog > div { height: 100%; width: 0; background: linear-gradient(90deg, var(--v1), var(--v2)); }
+.chunk.listening { border-color: var(--v1); box-shadow: 0 0 0 3px var(--tint); }
+.review { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; border-radius: 22px; padding: 18px 20px; margin-bottom: 18px;
+  background: linear-gradient(110deg, color-mix(in srgb, var(--v2) 12%, var(--glass-strong)), color-mix(in srgb, var(--v1) 10%, var(--glass-strong))); border: 1px solid color-mix(in srgb, var(--v2) 30%, var(--line)); }
+.review h3 { font-size: 1.1rem; margin-bottom: 4px; }

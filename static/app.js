@@ -561,7 +561,7 @@ $("#btnGenerate").onclick = async () => {
       chunks: prep.chunks, voice: voicePayload(v), ref: v.ref || {}, threshold: +$("#threshold").value,
       asr: $("#optAsr").checked, dictionary: S.dictionary, pause_mode: pauseMode(v), ...englishOpts(),
       title: fileTitle(script.value), voice_name: v.name,
-      max_retries: +$("#retries").value } });
+      max_retries: +$("#retries").value, review: $("#optReview").checked } });
     v.lastUsed = Date.now(); v.usedOnce = true; S.lastJob = r.id;
     S.history = [{ id: r.id, title: fileTitle(script.value), voice: v.name, at: Date.now(), downloaded: false }, ...(S.history || [])].slice(0, 60);
     save(); renderVoices(); renderHistory();
@@ -742,6 +742,7 @@ function startPolling(id, scroll) {
       renderJob(JOB);
       if (JOB.status === "en cours") pollT = setTimeout(tick, 1500);
       else if (JOB.status === "termine" && scroll) toast("Voix off terminée !");
+      else if (JOB.status === "a_valider" && scroll) { toast("Toutes les parties sont prêtes. Écoute-les puis assemble."); $("#reviewBox").scrollIntoView({ behavior: "smooth", block: "center" }); }
     } catch (e) {
       if (/introuvable/.test(e.message)) {
         $("#jobCard").hidden = true; S.lastJob = "";
@@ -766,6 +767,10 @@ function renderJob(j) {
   $("#stTotal").textContent = j.total; $("#stOk").textContent = j.ok; $("#stCheck").textContent = j.a_verifier;
   $("#stRegen").textContent = j.regenerations; $("#stCost").textContent = j.cost.fcfa.toLocaleString("fr-FR");
   $("#btnCancel").hidden = j.status !== "en cours";
+  $("#reviewBox").hidden = j.status !== "a_valider";
+  if (j.status === "a_valider") $("#reviewInfo").textContent = j.a_verifier
+    ? `${j.a_verifier} partie${j.a_verifier > 1 ? "s" : ""} à écouter en priorité (en orange). Refais-les si besoin, puis assemble.`
+    : "Toutes les parties ont passé le contrôle. Écoute-les si tu veux, puis assemble.";
   if (j.final) {
     $("#finalBox").hidden = false;
     const fa = $("#finalAudio");
@@ -804,8 +809,6 @@ function renderJob(j) {
     if (!el) { el = document.createElement("div"); list.appendChild(el); chunkEls.set(c.index, el); }
     el.hidden = only && c.status !== "a_verifier" && c.status !== "erreur";
     if (el.dataset.sig === sig) return;
-    const playing = el.querySelector("audio") && !el.querySelector("audio").paused;
-    if (playing) return;
     el.dataset.sig = sig;
     const [lab, cls] = STATUS[c.status] || [c.status, ""];
     const best = c.attempts.find(a => a.n === c.best);
@@ -814,9 +817,15 @@ function renderJob(j) {
       <div class="chunk-top">
         <div><span class="badge">#${c.index + 1}</span> <span class="badge ${cls}">${lab}${c.score != null && c.status !== "correction" ? " · " + c.score + "/100" : ""}</span></div>
         <div class="chunk-tools">
-          ${best ? `<audio controls preload="none" src="${best.url}"></audio>` : ""}
+          ${best ? `<button class="playbtn ${CA.idx === c.index && !CA.audio.paused ? "on" : ""}" data-play aria-label="Écouter la partie ${c.index + 1}">
+              <svg class="i-play" viewBox="0 0 24 24" width="18" height="18"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+              <svg class="i-pause" viewBox="0 0 24 24" width="18" height="18"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor"/></svg>
+            </button>
+            <span class="muted small">${best.duree ? fmtSec(best.duree) : ""}</span>
+            <button class="btn ghost small" data-chain>Écouter à partir d'ici</button>` : `<span class="muted small">En attente de l'audio…</span>`}
         </div>
       </div>
+      ${best ? `<div class="cprog"><div style="width:${CA.idx === c.index ? CA.pct : 0}%"></div></div>` : ""}
       <div class="chunk-text">${esc(c.text)}</div>
       ${c.issues && c.issues.length ? `<div class="issues">${c.issues.map(esc).join(" · ")}</div>` : ""}
       <div class="chunk-top" style="margin-top:8px">
@@ -830,12 +839,54 @@ function renderJob(j) {
       <div class="edit-area"><textarea>${esc(c.text)}</textarea>
         <div class="actions"><button class="btn primary small" data-act="regen-edit">Régénérer avec ce texte</button></div></div>`;
     $$("[data-choose]", el).forEach(b => b.onclick = () => chooseAttempt(c.index, +b.dataset.choose));
+    const pb = $("[data-play]", el); if (pb) pb.onclick = () => playChunk(c.index, false);
+    const cb = $("[data-chain]", el); if (cb) cb.onclick = () => playChunk(c.index, true);
     $("[data-act=edit]", el).onclick = () => $(".edit-area", el).classList.toggle("open");
     $("[data-act=regen]", el).onclick = () => regen(c.index, null);
     $("[data-act=regen-edit]", el).onclick = () => regen(c.index, $("textarea", el).value);
   });
 }
 JOB = null;
+
+/* ---------------- Écoute partie par partie ---------------- */
+const CA = { audio: new Audio(), idx: -1, chain: false, pct: 0 };
+function fmtSec(s) { s = Math.round(s); return s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")}` : `${s} s`; }
+function chunkBtnState() {
+  chunkEls.forEach((el, i) => {
+    const b = el.querySelector("[data-play]"); if (!b) return;
+    const on = i === CA.idx && !CA.audio.paused;
+    b.classList.toggle("on", on);
+    el.classList.toggle("listening", i === CA.idx && (on || CA.chain));
+  });
+  $("#btnPlayAllParts") && ($("#btnPlayAllParts").textContent = CA.chain && !CA.audio.paused ? "Arrêter l'écoute" : "Tout écouter d'affilée");
+}
+function playChunk(i, chain) {
+  if (!JOB) return;
+  if (CA.idx === i && !CA.audio.paused && !chain) { CA.audio.pause(); chunkBtnState(); return; }
+  const c = JOB.chunks[i]; if (!c) { CA.chain = false; chunkBtnState(); return; }
+  const a = c.attempts.find(x => x.n === c.best);
+  if (!a) { if (chain) return playChunk(i + 1, true); return; }
+  CA.idx = i; CA.chain = chain; CA.pct = 0;
+  CA.audio.src = a.url + "?v=" + a.n;
+  CA.audio.play().then(() => orbListen(CA.audio)).catch(() => {});
+  const el = chunkEls.get(i);
+  if (chain && el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+  chunkBtnState();
+}
+CA.audio.addEventListener("timeupdate", () => {
+  if (!CA.audio.duration) return;
+  CA.pct = CA.audio.currentTime / CA.audio.duration * 100;
+  const el = chunkEls.get(CA.idx); const bar = el && el.querySelector(".cprog > div");
+  if (bar) bar.style.width = CA.pct + "%";
+});
+CA.audio.addEventListener("pause", chunkBtnState);
+CA.audio.addEventListener("play", chunkBtnState);
+CA.audio.addEventListener("ended", () => {
+  const i = CA.idx, c = JOB && JOB.chunks[i];
+  CA.pct = 100;
+  if (CA.chain && JOB && i + 1 < JOB.chunks.length) setTimeout(() => CA.chain && playChunk(i + 1, true), Math.round(((c && c.pause_after) || 0.4) * 1000));
+  else { CA.chain = false; chunkBtnState(); }
+});
 
 async function regen(i, text) {
   if (!JOB) return;
@@ -851,6 +902,20 @@ async function chooseAttempt(i, n) {
   try { const r = await api(`/api/jobs/${JOB.id}/chunks/${i}/choose`, { method: "POST", body: { n } }); JOB = r; outdated = true; renderJob(r); }
   catch (e) { toast(e.message, true); }
 }
+$("#btnAssemble").onclick = async () => {
+  if (!JOB) return;
+  CA.audio.pause(); CA.chain = false;
+  $("#btnAssemble").disabled = true; $("#btnAssemble").textContent = "Assemblage…";
+  try { const r = await api(`/api/jobs/${JOB.id}/assemble`, { method: "POST" }); JOB = r; JOB._ver = Date.now(); outdated = false; renderJob(r); toast("Voix off assemblée."); $("#finalBox").scrollIntoView({ behavior: "smooth", block: "center" }); }
+  catch (e) { toast(e.message, true); }
+  finally { $("#btnAssemble").disabled = false; $("#btnAssemble").textContent = "Assembler la voix off"; }
+};
+$("#btnPlayAllParts").onclick = () => {
+  if (CA.chain && !CA.audio.paused) { CA.chain = false; CA.audio.pause(); chunkBtnState(); return; }
+  playChunk(0, true);
+};
+$("#optReview").checked = S.review !== false;
+$("#optReview").onchange = () => { S.review = $("#optReview").checked; save(); };
 $("#btnReassemble").onclick = async () => {
   if (!JOB) return;
   $("#btnReassemble").disabled = true;
