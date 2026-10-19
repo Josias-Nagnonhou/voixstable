@@ -70,9 +70,9 @@
           <div class="row wrap">
             <label class="field"><span>Taille des morceaux</span>
               <select id="maxChars">
-                <option value="180">Petits : le plus stable</option>
-                <option value="280" selected>Moyens : recommandé</option>
-                <option value="420">Grands : plus fluide</option>
+                <option value="280">Courts (2 à 3 phrases) : le plus stable</option>
+                <option value="600" selected>Paragraphes : naturel, recommandé</option>
+                <option value="1000">Longs : le plus fluide</option>
               </select></label>
             <label class="field"><span>Exigence du contrôle</span>
               <select id="threshold">
@@ -291,7 +291,15 @@
       <label>Hauteur <output id="oPitch">0</output><input type="range" id="edPitch" min="-6" max="6" step="1" value="0"></label>
       <label>Volume <output id="oVol">1.0</output><input type="range" id="edVol" min="0.5" max="2" step="0.1" value="1"></label>
     </div>
-    <h4>Pauses (en secondes)</h4>
+    <h4>Pauses</h4>
+    <div class="row wrap">
+      <label class="field grow"><span>Rythme</span>
+        <select id="edPauseMode">
+          <option value="naturel">Naturel : l'outil reprend les pauses de la voix (recommandé)</option>
+          <option value="perso">Personnalisé : je règle les pauses moi-même</option>
+        </select></label>
+    </div>
+    <div id="pauseSliders">
     <div class="sliders">
       <label>Après un point <output id="oP1"></output><input type="range" id="edPoint" min="0.2" max="1.5" step="0.05"></label>
       <label>Après « ? » <output id="oP2"></output><input type="range" id="edQuestion" min="0.2" max="1.5" step="0.05"></label>
@@ -301,6 +309,7 @@
       <label>Virgules renforcées <output id="oP6"></output><input type="range" id="edComma" min="0" max="0.6" step="0.05"></label>
     </div>
     <p class="muted small">« Virgules renforcées » à 0 : MiniMax gère les virgules lui-même. Monte un peu si la voix enchaîne trop vite.</p>
+    </div>
     <div class="row wrap">
       <label class="field grow"><span>Phrase de test</span><input id="edTestText" value="Mes bien-aimés, écoutez bien. Ce que je vais vous dire aujourd'hui est important !"></label>
       <button class="btn ghost" id="btnEdTest">Écouter (~5 FCFA)</button>

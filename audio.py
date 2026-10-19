@@ -407,7 +407,35 @@ def chunk_metrics(mp3_bytes, chars, expected_pauses=0.0):
         "silence_max": round(longest_silence(mask), 2),
         "sature": float(np.mean(np.abs(x) > 0.985)) > 0.003,
         "ratio_parole": round(speech / dur, 2),
+        "pauses": inner_gaps(mask),
     }
+
+
+def inner_gaps(mask, min_s=0.12, max_s=2.0):
+    """Durées des silences à l'intérieur de la parole (les vraies pauses de la voix)."""
+    gaps, run, started = [], 0, False
+    for m in mask:
+        if m:
+            if started and run:
+                d = run * HOP / SR
+                if min_s <= d <= max_s:
+                    gaps.append(round(d, 3))
+            started, run = True, 0
+        elif started:
+            run += 1
+    return gaps
+
+
+def natural_pauses(gap_lists):
+    """Déduit les pauses de la voix (virgule, phrase) à partir de ce qu'elle a généré."""
+    g = sorted(x for lst in gap_lists for x in (lst or []))
+    if len(g) < 4:
+        return {"virgule": 0.2, "phrase": 0.42}
+    arr = np.array(g)
+    phrase = float(np.percentile(arr, 75))
+    virgule = float(np.percentile(arr, 30))
+    return {"virgule": round(min(max(virgule, 0.12), 0.35), 3),
+            "phrase": round(min(max(phrase, 0.25), 0.9), 3)}
 
 
 def judge(metrics, ref, expected_pauses_max=0.0):

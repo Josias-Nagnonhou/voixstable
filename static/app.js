@@ -7,7 +7,8 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const STORE = "voixstable_v1";
-const DEFAULT_PAUSES = { point: 0.55, question: 0.7, exclamation: 0.65, suspension: 0.8, paragraphe: 1.1, virgule: 0 };
+const DEFAULT_PAUSES = { point: 0.45, question: 0.5, exclamation: 0.5, suspension: 0.65, paragraphe: 0.85, virgule: 0 };
+const pauseMode = v => (v && v.pauseMode) || "naturel";
 const PRICE = { "speech-2.8-hd": 100, "speech-2.8-turbo": 60 };
 const FCFA = 600;
 
@@ -411,6 +412,8 @@ function openEditor(id) {
   $("#edSpeed").value = E.speed ?? 1; $("#edPitch").value = E.pitch ?? 0; $("#edVol").value = E.vol ?? 1;
   const p = Object.assign({ ...DEFAULT_PAUSES }, E.pauses || {});
   PMAP.forEach(([inp, k]) => ($("#" + inp).value = p[k]));
+  $("#edPauseMode").value = E.pauseMode || "naturel";
+  $("#pauseSliders").hidden = $("#edPauseMode").value === "naturel";
   $("#edAudio").hidden = true;
   syncOutputs();
   $("#voiceEditor").scrollIntoView({ behavior: "smooth" });
@@ -424,9 +427,10 @@ function syncOutputs() {
 $$("#voiceEditor input[type=range]").forEach(r => r.addEventListener("input", syncOutputs));
 function editorValues() {
   const pauses = {}; PMAP.forEach(([inp, k]) => (pauses[k] = +$("#" + inp).value));
-  return { name: $("#edName").value.trim() || E.name, emotion: $("#edEmotion").value, lang: $("#edLang").value,
+  return { pauseMode: $("#edPauseMode").value, name: $("#edName").value.trim() || E.name, emotion: $("#edEmotion").value, lang: $("#edLang").value,
            speed: +$("#edSpeed").value, pitch: +$("#edPitch").value, vol: +$("#edVol").value, pauses };
 }
+$("#edPauseMode").onchange = () => ($("#pauseSliders").hidden = $("#edPauseMode").value === "naturel");
 $("#btnCloseEditor").onclick = () => ($("#voiceEditor").hidden = true);
 $("#btnEdSave").onclick = () => {
   Object.assign(E, editorValues()); save(); renderVoices(); renderVoiceSelect();
@@ -436,7 +440,7 @@ $("#btnEdTest").onclick = async () => {
   const tmp = Object.assign({ ...E }, editorValues());
   $("#btnEdTest").disabled = true;
   try {
-    const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(tmp), text: $("#edTestText").value, dictionary: S.dictionary, pauses: tmp.pauses } });
+    const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(tmp), text: $("#edTestText").value, dictionary: S.dictionary, pauses: tmp.pauses, pause_mode: pauseMode(tmp) } });
     E.lastUsed = Date.now(); E.usedOnce = true; save();
     const a = $("#edAudio"); a.hidden = false; a.src = r.url; a.play().catch(() => {});
   } catch (e) { toast(e.message, true, 6000); }
@@ -476,7 +480,7 @@ async function prepareText() {
   const v = currentVoice();
   return api("/api/prepare", { method: "POST", body: {
     text: script.value, dictionary: S.dictionary, options: genOptions(), max_chars: +$("#maxChars").value,
-    pauses: (v && v.pauses) || DEFAULT_PAUSES, model: $("#modelSelect").value } });
+    pauses: (v && v.pauses) || DEFAULT_PAUSES, pause_mode: pauseMode(v), model: $("#modelSelect").value } });
 }
 function renderPreview(r) {
   $("#previewCard").hidden = false;
@@ -485,7 +489,7 @@ function renderPreview(r) {
     ? r.changes.map(c => `<span class="change"><s>${esc(c.avant) || "∅"}</s> → <b>${esc(c.apres) || "∅"}</b></span>`).join("")
     : `<span class="muted small">Aucune correction nécessaire.</span>`;
   $("#chunksPreview").innerHTML = r.chunks.map(c =>
-    `<div class="cp"><span class="num">#${c.index + 1}</span>${esc(c.minimax_text).replace(/&lt;#([\d.]+)#&gt;/g, '<span class="pause">pause $1 s</span>')}${c.pause_after ? `<span class="pause">puis ${c.pause_after} s</span>` : ""}</div>`).join("");
+    `<div class="cp"><span class="num">#${c.index + 1}</span>${esc(c.minimax_text).replace(/&lt;#([\d.]+)#&gt;/g, '<span class="pause">pause $1 s</span>')}${c.pause_after ? `<span class="pause">${pauseMode(currentVoice()) === "naturel" ? "pause naturelle" : "puis " + c.pause_after + " s"}</span>` : ""}</div>`).join("");
 }
 $("#btnPreview").onclick = async () => {
   if (!script.value.trim()) { toast("Colle d'abord ton script.", true); return; }
@@ -506,7 +510,7 @@ $("#btnGenerate").onclick = async () => {
     renderPreview(prep);
     const r = await api("/api/jobs", { method: "POST", body: {
       chunks: prep.chunks, voice: voicePayload(v), ref: v.ref || {}, threshold: +$("#threshold").value,
-      asr: $("#optAsr").checked, dictionary: S.dictionary,
+      asr: $("#optAsr").checked, dictionary: S.dictionary, pause_mode: pauseMode(v),
       max_retries: +$("#retries").value } });
     v.lastUsed = Date.now(); v.usedOnce = true; S.lastJob = r.id; save(); renderVoices();
     startPolling(r.id, true);

@@ -69,7 +69,8 @@ async def prepare(request: Request):
     b = await request.json()
     text = b.get("text", "")
     prepared = textprep.prepare(text, b.get("dictionary"), b.get("options"))
-    chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 280)), b.get("pauses"))
+    chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 600)), b.get("pauses"),
+                                  natural=b.get("pause_mode", "naturel") == "naturel")
     chars = sum(c["chars"] for c in chunks)
     model = b.get("model", "speech-2.8-hd")
     return {
@@ -263,7 +264,7 @@ async def speak(request: Request, x_api_key: str = Header(""), x_api_base: str =
     text = textprep.prepare((b.get("text") or "")[:600], b.get("dictionary"))
     if not text:
         raise HTTPException(400, "Texte vide.")
-    chunks = textprep.make_chunks(text, 2000, b.get("pauses"))
+    chunks = textprep.make_chunks(text, 2000, b.get("pauses"), natural=b.get("pause_mode", "naturel") == "naturel")
     mm = " ".join(c["minimax_text"] for c in chunks)
     model = v.get("model", "speech-2.8-hd")
     data, extra = await run_blocking(cl.tts, mm, v["voice_id"], model=model,
@@ -335,6 +336,8 @@ class Job:
         self.asr_seconds = 0.0
         self.asr_note = None
         self.dictionary = b.get("dictionary") or []
+        self.pause_mode = b.get("pause_mode", "naturel")
+        self.natural = None
 
     def listen(self, c, a):
         """Réécoute : transcrit le morceau et vérifie qu'aucun mot ne manque."""
@@ -494,12 +497,35 @@ class Job:
             self.phase = "Erreur"
 
     def assemble(self):
-        files, pauses = [], []
+        files, pauses, chosen = [], [], []
         for c in self.chunks:
             a = next((a for a in c["attempts"] if a["n"] == c["best"]), None)
             if a:
                 files.append(a["file"])
-                pauses.append(c["pause_after"])
+                chosen.append((c, a))
+        if self.pause_mode == "naturel":
+            # pauses mesurées dans la voix elle-même
+            nat = audio.natural_pauses([a["metrics"].get("pauses") for _, a in chosen])
+            self.natural = nat
+            last = len(chosen) - 1
+            for k, (c, a) in enumerate(chosen):
+                if k == last:
+                    pauses.append(0.0)
+                    continue
+                end = c.get("end", ".")
+                if c.get("para_end"):
+                    p = min(max(nat["phrase"] * 1.7, 0.55), 1.3)
+                elif end == ",":
+                    p = nat["virgule"]
+                elif end == "...":
+                    p = nat["phrase"] * 1.3
+                elif end in ("?", "!"):
+                    p = nat["phrase"] * 1.1
+                else:
+                    p = nat["phrase"]
+                pauses.append(round(p, 3))
+        else:
+            pauses = [c["pause_after"] for c, _ in chosen]
         if not files:
             raise RuntimeError("Aucun morceau généré.")
         out = os.path.join(self.dir, f"voix_finale_{int(time.time())}.mp3")
@@ -529,7 +555,7 @@ class Job:
             "a_verifier": sum(1 for c in self.chunks if c["status"] == "a_verifier"),
             "regenerations": sum(max(0, len(c["attempts"]) - 1) for c in self.chunks),
             "cost": cost(self.chars_billed, self.model, self.asr_seconds),
-            "asr": self.asr, "asr_note": self.asr_note,
+            "asr": self.asr, "asr_note": self.asr_note, "pauses_voix": self.natural,
             "final": f"/api/jobs/{self.id}/final.mp3" if self.final else None,
             "chunks": chunks,
         })
@@ -547,7 +573,8 @@ async def create_job(request: Request, x_api_key: str = Header(""), x_api_base: 
     chunks = b.get("chunks")
     if not chunks:
         prepared = textprep.prepare(b.get("text", ""), b.get("dictionary"), b.get("options"))
-        chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 280)), b.get("pauses"))
+        chunks = textprep.make_chunks(prepared, int(b.get("max_chars", 600)), b.get("pauses"),
+                                      natural=b.get("pause_mode", "naturel") == "naturel")
     if not chunks:
         raise HTTPException(400, "Le texte est vide.")
     if not b.get("voice", {}).get("voice_id"):
@@ -589,7 +616,7 @@ async def chunk_regen(jid: str, i: int, request: Request, x_api_key: str = Heade
     text = b.get("text")
     if text is not None:
         text = textprep.prepare(text, b.get("dictionary"))
-        mm = textprep.make_chunks(text, 10000)
+        mm = textprep.make_chunks(text, 10000, natural=j.pause_mode == "naturel")
         text_mm = " ".join(c["minimax_text"] for c in mm) if mm else text
     c = j.chunks[i]
     c["locked"] = False

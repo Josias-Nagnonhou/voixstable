@@ -219,10 +219,17 @@ def numbers(text):
 
 
 def hyphens(text):
-    # a-t-il, va-t-elle -> "a til" (le t de liaison est bien prononcé)
-    text = re.sub(r"(?i)([a-zéèêàâ])-t-(il|elle|on|ils|elles)\b", r"\1 t\2", text)
+    # a-t-il, va-t-elle : on garde tel quel (MiniMax fait bien la liaison)
+    keep = {}
+    def _k(m):
+        key = f"§{len(keep)}§"
+        keep[key] = m.group(0)
+        return key
+    text = re.sub(r"(?i)\b\w+-t-(il|elle|on|ils|elles)\b", _k, text)
     # tirets entre mots : peut-être, est-ce, dit-il -> espace
     text = re.sub(r"(?<=[A-Za-zÀ-ÿ])-(?=[A-Za-zÀ-ÿ])", " ", text)
+    for k, v in keep.items():
+        text = text.replace(k, v)
     # tirets isolés (incises) -> virgule
     text = re.sub(r"\s-\s", ", ", text)
     return text
@@ -290,20 +297,20 @@ def ending_of(sentence):
     return s[-1] if s else "."
 
 
-def make_chunks(prepared_text, max_chars=280, pauses=None):
+def make_chunks(prepared_text, max_chars=600, pauses=None, natural=True):
     """Découpe en morceaux de 1 à quelques phrases.
 
     Entre deux phrases d'un même morceau, on insère une pause MiniMax <#x#>
     pour qu'il respecte les points. Entre deux morceaux, c'est l'assemblage
     qui ajoute le silence exact (champ 'pause_after').
     """
-    p = {"virgule": 0.0, "point": 0.55, "question": 0.7, "exclamation": 0.65,
-         "suspension": 0.8, "paragraphe": 1.1}
+    p = {"virgule": 0.0, "point": 0.45, "question": 0.5, "exclamation": 0.5,
+         "suspension": 0.65, "paragraphe": 0.85}
     p.update(pauses or {})
 
     def pause_for(end):
         return {".": p["point"], "?": p["question"], "!": p["exclamation"],
-                "...": p["suspension"]}.get(end, p["point"])
+                "...": p["suspension"], ",": max(0.12, p["virgule"] or 0.18)}.get(end, p["point"])
 
     paragraphs = [x.strip() for x in re.split(r"\n\s*\n|\n", prepared_text) if x.strip()]
     chunks = []
@@ -339,9 +346,9 @@ def make_chunks(prepared_text, max_chars=280, pauses=None):
         parts = []
         for j, s in enumerate(c["sentences"]):
             parts.append(s)
-            if j < len(c["sentences"]) - 1:
+            if not natural and j < len(c["sentences"]) - 1:
                 parts.append(f"<#{pause_for(ending_of(s)):.2f}#>")
-        if p["virgule"] > 0:
+        if not natural and p["virgule"] > 0:
             joined = " ".join(parts)
             joined = re.sub(r",\s+(?=[A-Za-zÀ-ÿ])", f", <#{p['virgule']:.2f}#> ", joined)
         else:
@@ -358,6 +365,8 @@ def make_chunks(prepared_text, max_chars=280, pauses=None):
             "chars": len(plain),
             "pause_after": round(pause_after, 2),
             "paragraph": c["paragraph"],
+            "end": ending_of(last),
+            "para_end": bool(is_para_end and i < len(chunks) - 1),
         })
     return out
 
