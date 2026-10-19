@@ -191,7 +191,7 @@ def numbers(text):
         if mi and int(mi) > 0:
             out += " " + _n(int(mi))
         return out
-    text = re.sub(r"\b(\d{1,2})\s?h\s?(\d{2})?\b", heure, text)
+    text = re.sub(r"\b(\d{1,2})\s?h(?:\s?(\d{2}))?\b", heure, text)
 
     # Ordinaux : 1er, 1re, 1ère, 2e, 2ème, 3ᵉ
     def ordinal(m):
@@ -200,6 +200,10 @@ def numbers(text):
             return "première" if suf.startswith(("re", "ère", "ere")) else "premier"
         return _n(v, "ordinal")
     text = re.sub(r"\b(\d{1,4})(er|re|ère|ere|e|ème|eme|ᵉ|è)\b", ordinal, text)
+
+    # Systèmes de jeu (foot) : 4-4-2, 4-2-3-1 -> chiffres lus un par un
+    text = re.sub(r"\b\d(?:-\d){2,3}\b",
+                  lambda m: " ".join(_n(int(d)) for d in m.group(0).split("-")), text)
 
     # Scores et intervalles : 2-1, 2020-2022
     text = re.sub(r"\b(\d{1,4})\s?-\s?(\d{1,4})\b",
