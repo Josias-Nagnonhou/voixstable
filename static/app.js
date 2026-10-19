@@ -855,13 +855,49 @@ $("#btnDTest").onclick = async () => {
   const v = currentVoice();
   if (!v) { toast("Clone d'abord une voix pour tester.", true); return; }
   if (!mot) { toast("Écris le mot à tester.", true); return; }
-  const dict = S.dictionary.filter(d => d.mot.toLowerCase() !== mot.toLowerCase());
-  if (lecture) dict.push({ mot, lecture });
-  try {
-    const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(v), text: `Écoutez bien ce mot : ${mot}. Encore une fois : ${mot}.`, dictionary: dict } });
-    v.usedOnce = true; v.lastUsed = Date.now(); save();
-    const a = $("#dAudio"); a.hidden = false; a.src = r.url; a.play().catch(() => {});
-  } catch (e) { toast(e.message, true, 6000); }
+  const base = S.dictionary.filter(d => d.mot.toLowerCase() !== mot.toLowerCase());
+  const say = `Écoutez bien : ${mot}. Encore une fois, ${mot}.`;
+  const variants = lecture.includes("|") ? lecture.split("|").map(x => x.trim()).filter(Boolean) : null;
+  if (!variants) {
+    const dict = [...base]; if (lecture) dict.push({ mot, lecture });
+    try {
+      const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(v), text: say, dictionary: dict } });
+      v.usedOnce = true; v.lastUsed = Date.now(); save();
+      $("#dCompare").hidden = true;
+      const a = $("#dAudio"); a.hidden = false; a.src = r.url; a.play().catch(() => {});
+    } catch (e) { toast(e.message, true, 6000); }
+    return;
+  }
+  const box = $("#dCompare");
+  box.hidden = false; $("#dAudio").hidden = true;
+  box.innerHTML = variants.map((w, i) => `<div class="dvar"><b>${esc(w)}</b><span class="muted small">Génération…</span></div>`).join("");
+  $("#btnDTest").disabled = true;
+  const results = await Promise.all(variants.map(async w => {
+    const same = w.toLowerCase() === mot.toLowerCase();
+    try {
+      const r = await api("/api/speak", { method: "POST", body: { voice: voicePayload(v), text: say, dictionary: same ? base : [...base, { mot, lecture: w }] } });
+      return { w, url: r.url, same };
+    } catch (e) { return { w, err: e.message, same }; }
+  }));
+  $("#btnDTest").disabled = false;
+  v.usedOnce = true; v.lastUsed = Date.now(); save();
+  box.innerHTML = results.map((x, i) => `
+    <div class="dvar">
+      <b>${esc(x.w)}</b>${x.same ? `<span class="muted small">écriture normale</span>` : ""}
+      ${x.url ? `<audio controls preload="auto" src="${x.url}"></audio>` : `<span class="small" style="color:var(--bad)">${esc(x.err)}</span>`}
+      ${x.url ? `<button class="btn ${i === 0 ? "ghost" : "primary"} small" data-keep="${i}">Garder celle-ci</button>` : ""}
+    </div>`).join("");
+  $$("[data-keep]", box).forEach(b => b.onclick = () => {
+    const x = results[+b.dataset.keep];
+    if (x.same) { S.dictionary = S.dictionary.filter(d => d.mot.toLowerCase() !== mot.toLowerCase()); toast(`« ${mot} » reste lu normalement.`); }
+    else { addWord(mot, x.w); toast(`« ${mot} » sera lu « ${x.w} » partout.`); }
+    save(); renderDico(); box.hidden = true; $("#dMot").value = ""; $("#dLecture").value = "";
+  });
+};
+$("#chipQua").onclick = () => {
+  $("#dMot").value = "quatre";
+  $("#dLecture").value = "quatre | katre | catre | kattre";
+  $("#btnDTest").click();
 };
 
 /* ---------------- Réglages ---------------- */

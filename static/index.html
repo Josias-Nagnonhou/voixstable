@@ -384,12 +384,15 @@
       <button class="btn ghost" id="btnDTest">Écouter</button>
       <button class="btn primary" id="btnDAdd">Ajouter</button>
     </div>
+    <p class="muted small" style="margin:-4px 0 10px">Pas sûr de la bonne écriture ? Écris-en plusieurs séparées par « | » (exemple : <b>katre | catre | kattre</b>) puis clique sur Écouter : l'outil les fait toutes lire pour que tu compares.</p>
     <audio id="dAudio" controls preload="none" hidden></audio>
+    <div id="dCompare" class="dcompare" hidden></div>
     <div class="packs">
       <span class="muted small">Ajouter des suggestions :</span>
       <button class="chip" data-pack="foot">Foot</button>
       <button class="chip" data-pack="islam">Islam</button>
       <button class="chip" data-pack="chretien">Chrétien</button>
+      <button class="chip" id="chipQua">Corriger « kouatre »</button>
     </div>
     <input id="dSearch" class="search" placeholder="Rechercher dans le dictionnaire…">
     <div id="dicoList" class="dico-list"></div>

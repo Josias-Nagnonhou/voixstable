@@ -380,3 +380,8 @@ audio { color-scheme: inherit; }
   .hrow .hplayer { grid-column: 1 / -1; }
   .tabs { overflow-x: auto; }
 }
+
+.dcompare { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 6px 0 16px; }
+.dvar { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 16px; background: var(--field); border: 1px solid var(--line); }
+.dvar b { font-size: 1.05rem; }
+.dvar audio { width: 100%; height: 38px; }
