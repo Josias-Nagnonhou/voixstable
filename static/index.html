@@ -154,8 +154,17 @@
   <div class="card-head page-head">
     <h2>Mes voix</h2>
     <div class="row-tight">
+      <button class="btn ghost small" id="btnPlayAll" hidden>Écouter toutes les voix</button>
       <button class="btn ghost small" id="btnSync">Retrouver mes voix MiniMax</button>
       <button class="btn primary small" id="btnNewVoice">+ Cloner une voix</button>
+    </div>
+  </div>
+  <div id="playAllBar" class="playall" hidden>
+    <div class="playall-text"><b id="paTitle">Préparation…</b><span id="paSub" class="muted small"></span></div>
+    <div class="row-tight">
+      <button class="btn ghost small" id="btnPaPrev">Précédente</button>
+      <button class="btn ghost small" id="btnPaNext">Suivante</button>
+      <button class="btn ghost small" id="btnPaStop">Arrêter</button>
     </div>
   </div>
   <div id="voiceList" class="voice-list"></div>

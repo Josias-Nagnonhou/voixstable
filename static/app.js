@@ -140,6 +140,7 @@ function renderVoices() {
       <p>Clone ta première voix : importe un audio de 1 à 2 minutes, l'outil s'occupe du reste.</p>
       <button class="btn primary" id="emptyNew">+ Cloner une voix</button></div>`;
     $("#emptyNew").onclick = openWizard;
+    updatePlayAllBtn();
     return;
   }
   list.innerHTML = S.voices.map(v => {
@@ -149,7 +150,8 @@ function renderVoices() {
       ? `<span class="badge bad">Jamais utilisée : à utiliser sous ${left} j, sinon MiniMax la supprime</span>`
       : `<span class="badge ok">Active</span>`;
     const mode = { auto: "Naturel", calm: "Stable", happy: "Chaleureux", sad: "Grave", surprised: "Dynamique" }[v.emotion || "auto"];
-    return `<div class="voice">
+    return `<div class="voice" data-vid="${esc(v.id)}">
+      ${v.imported ? `<span class="vnum">${S.voices.indexOf(v) + 1}</span>` : ""}
       <div class="vhead"><div class="orb orb-mini" style="--h:${voiceHue(v.id)}deg"><span></span></div>
       <div><h3>${esc(v.name)}</h3><div class="meta">${v.imported ? `Voix du site MiniMax${v.createdLabel ? " · créée le " + esc(v.createdLabel) : ""}` : esc(v.analyse?.categorie || "Voix clonée")}</div></div></div>
       <div class="tags"><span class="badge">${mode}</span><span class="badge">Vitesse ${(v.speed ?? 1).toFixed(2)}</span>${exp}</div>
@@ -164,6 +166,7 @@ function renderVoices() {
   }).join("");
   $$("[data-use]", list).forEach(b => b.onclick = () => { S.lastVoice = b.dataset.use; save(); renderVoiceSelect(); showTab("studio"); });
   $$("[data-edit]", list).forEach(b => b.onclick = () => openEditor(b.dataset.edit));
+  updatePlayAllBtn();
   $$("[data-rename]", list).forEach(b => b.onclick = () => {
     const v = voiceById(b.dataset.rename); if (!v) return;
     const n = prompt("Nouveau nom pour cette voix :", v.name);
@@ -181,6 +184,62 @@ function renderVoices() {
     finally { b.disabled = false; b.textContent = "Écouter"; }
   });
 }
+function updatePlayAllBtn() {
+  const b = $("#btnPlayAll"); const n = S.voices.length;
+  b.hidden = n < 2;
+  b.textContent = `Écouter toutes les voix (~${Math.max(1, Math.round(n * 1.7))} FCFA)`;
+}
+
+/* ---------------- Écouter toutes les voix (playlist) ---------------- */
+const PA = { items: [], i: 0, running: false, audio: new Audio() };
+function paCard(id) { return document.querySelector(`.voice[data-vid="${CSS.escape(id)}"]`); }
+function paHighlight() {
+  $$(".voice.playing").forEach(c => c.classList.remove("playing"));
+  const it = PA.items[PA.i]; if (!it) return;
+  const c = paCard(it.v.id);
+  if (c) { c.classList.add("playing"); c.scrollIntoView({ behavior: "smooth", block: "center" }); }
+  $("#paTitle").textContent = `Voix n°${it.num} : ${it.v.name}`;
+  $("#paSub").textContent = it.url ? `${PA.i + 1} sur ${PA.items.length}` : `${PA.i + 1} sur ${PA.items.length} · génération…`;
+}
+async function paFetch(it) {
+  if (it.url || it.err || it.pending) return it.pending;
+  it.pending = api("/api/speak", { method: "POST", body: { voice: voicePayload(it.v, "speech-2.8-turbo"), text: `Voix numéro ${it.num}. Bonjour à tous.` } })
+    .then(r => { it.url = r.url; it.v.usedOnce = true; it.v.lastUsed = Date.now(); })
+    .catch(e => { it.err = e.message; });
+  return it.pending;
+}
+async function paPlay() {
+  if (!PA.running) return;
+  const it = PA.items[PA.i];
+  if (!it) { paStop("Toutes les voix ont été écoutées. Renomme celles que tu as reconnues."); return; }
+  paHighlight();
+  for (let k = 1; k <= 3; k++) if (PA.items[PA.i + k]) paFetch(PA.items[PA.i + k]);
+  await paFetch(it);
+  if (!PA.running || PA.items[PA.i] !== it) return;
+  if (it.err) { toast(`Voix n°${it.num} : ${it.err}`, true, 4000); PA.i++; return paPlay(); }
+  paHighlight();
+  PA.audio.src = it.url;
+  PA.audio.onended = () => { if (PA.running && PA.items[PA.i] === it) { PA.i++; setTimeout(paPlay, 450); } };
+  try { await PA.audio.play(); orbListen(PA.audio); } catch (e) { /* lecture bloquée */ }
+}
+function paStop(msg) {
+  PA.running = false; PA.audio.pause();
+  $("#playAllBar").hidden = true;
+  $$(".voice.playing").forEach(c => c.classList.remove("playing"));
+  save();
+  if (msg) toast(msg, false, 6000);
+}
+$("#btnPlayAll").onclick = () => {
+  if (!S.apiKey) { toast("Ajoute d'abord ta clé API dans Réglages.", true); return; }
+  PA.items = S.voices.map((v, i) => ({ v, num: i + 1 }));
+  PA.i = 0; PA.running = true;
+  $("#playAllBar").hidden = false;
+  paPlay();
+};
+$("#btnPaNext").onclick = () => { PA.audio.pause(); PA.i = Math.min(PA.i + 1, PA.items.length); paPlay(); };
+$("#btnPaPrev").onclick = () => { PA.audio.pause(); PA.i = Math.max(0, PA.i - 1); paPlay(); };
+$("#btnPaStop").onclick = () => paStop();
+
 function siteVoiceNumber() { return S.voices.filter(v => v.imported).length + 1; }
 function frDate(s) { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ""); return m ? `${m[3]}/${m[2]}/${m[1]}` : ""; }
 

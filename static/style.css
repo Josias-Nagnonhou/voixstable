@@ -335,3 +335,11 @@ audio { color-scheme: inherit; }
 .voice .actions .btn { flex: 0 0 auto; }
 .voice h3 { overflow-wrap: anywhere; }
 .voice .meta.small { overflow-wrap: anywhere; }
+
+.voice { position: relative; }
+.vnum { position: absolute; top: 14px; right: 16px; min-width: 30px; height: 30px; padding: 0 8px; border-radius: 10px; display: grid; place-items: center; font-weight: 700; font-size: .85rem; background: var(--tint); color: var(--accent-ink); }
+.voice.playing { border-color: var(--v1); box-shadow: 0 0 0 3px var(--tint), var(--shadow); }
+.voice.playing .orb-mini { animation-duration: 3s; }
+.playall { position: sticky; top: 84px; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 18px; margin-bottom: 16px; border-radius: 20px; background: var(--glass-strong); border: 1px solid color-mix(in srgb, var(--v1) 35%, var(--line)); box-shadow: var(--shadow); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+.playall-text { display: flex; flex-direction: column; }
+@media (max-width: 760px) { .playall { top: 112px; } }
