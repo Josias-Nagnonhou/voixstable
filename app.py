@@ -676,7 +676,8 @@ def final_file(jid: str, name: str = "voix-off"):
     j = get_job(jid)
     if not j.final:
         raise HTTPException(404)
-    safe = re.sub(r"[^A-Za-z0-9_-]+", "-", name)[:60] or "voix-off"
+    safe = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", name)
+    safe = re.sub(r"\s+", " ", safe).strip(" .")[:80] or "voix-off"
     return FileResponse(j.final, media_type="audio/mpeg", filename=f"{safe}.mp3")
 
 

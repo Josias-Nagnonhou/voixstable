@@ -12,7 +12,7 @@ const pauseMode = v => (v && v.pauseMode) || "naturel";
 const PRICE = { "speech-2.8-hd": 100, "speech-2.8-turbo": 60 };
 const FCFA = 600;
 
-let S = { apiKey: "", base: "https://api.minimax.io", voices: [], dictionary: [], lastVoice: "", model: "speech-2.8-hd", lastJob: "", script: "" };
+let S = { apiKey: "", base: "https://api.minimax.io", voices: [], dictionary: [], lastVoice: "", model: "speech-2.8-hd", lastJob: "", script: "", history: [] };
 function load() {
   try { const raw = localStorage.getItem(STORE); if (raw) S = Object.assign(S, JSON.parse(raw)); } catch (e) { /* stockage indisponible */ }
 }
@@ -512,13 +512,69 @@ $("#btnGenerate").onclick = async () => {
       chunks: prep.chunks, voice: voicePayload(v), ref: v.ref || {}, threshold: +$("#threshold").value,
       asr: $("#optAsr").checked, dictionary: S.dictionary, pause_mode: pauseMode(v),
       max_retries: +$("#retries").value } });
-    v.lastUsed = Date.now(); v.usedOnce = true; S.lastJob = r.id; save(); renderVoices();
+    v.lastUsed = Date.now(); v.usedOnce = true; S.lastJob = r.id;
+    S.history = [{ id: r.id, title: fileTitle(script.value), voice: v.name, at: Date.now(), downloaded: false }, ...(S.history || [])].slice(0, 60);
+    save(); renderVoices(); renderHistory();
     startPolling(r.id, true);
   } catch (e) { toast(e.message, true, 6000); }
   finally { $("#btnGenerate").disabled = false; }
 };
 
 const chunkEls = new Map();
+/* ---------------- Historique des générations ---------------- */
+function fileTitle(text) {
+  let t = String(text || "").replace(/[*_#`>\[\]]/g, " ").replace(/\s+/g, " ").trim();
+  const first = (t.match(/^[^.!?\n]{8,}?[.!?]/) || [t])[0];
+  t = first.length > 70 ? first.slice(0, 70).replace(/\s+\S*$/, "") + "…" : first;
+  return t.replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim() || "voix-off";
+}
+function histItem(id) { return (S.history || []).find(h => h.id === id); }
+function markDownloaded(id) {
+  const h = histItem(id); if (!h) return;
+  h.downloaded = true; h.downloadedAt = Date.now(); save(); renderHistory();
+  if (JOB && JOB.id === id) renderJob(JOB);
+}
+function fmtDate(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + " à " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+function renderHistory() {
+  const H = S.history || [];
+  $("#historyCard").hidden = !H.length;
+  if (!H.length) return;
+  const done = H.filter(h => h.downloaded).length;
+  $("#historyMeta").textContent = `${done} téléchargée${done > 1 ? "s" : ""} sur ${H.length}`;
+  $("#historyList").innerHTML = H.map(h => `
+    <div class="hrow ${h.downloaded ? "dl" : ""} ${h.expired ? "exp" : ""}" data-hid="${esc(h.id)}">
+      <span class="hmark" aria-hidden="true">${h.downloaded ? "✓" : ""}</span>
+      <div class="htext"><b>${esc(h.title)}</b>
+        <span class="muted small">${esc(h.voice || "")} · ${fmtDate(h.at)}</span></div>
+      <span class="hbadge">${h.expired ? "Expirée" : h.downloaded ? "Téléchargée" : "Pas téléchargée"}</span>
+      <div class="row-tight">
+        <button class="btn ghost small" data-hopen="${esc(h.id)}">Ouvrir</button>
+        <button class="btn ${h.downloaded ? "ghost" : "primary"} small" data-hdl="${esc(h.id)}">Télécharger</button>
+        <button class="btn ghost small" data-hdel="${esc(h.id)}" aria-label="Retirer de la liste" title="Retirer de la liste">✕</button>
+      </div>
+    </div>`).join("");
+  $$("[data-hopen]").forEach(b => b.onclick = () => startPolling(b.dataset.hopen, true));
+  $$("[data-hdel]").forEach(b => b.onclick = () => { S.history = S.history.filter(h => h.id !== b.dataset.hdel); save(); renderHistory(); });
+  $$("[data-hdl]").forEach(b => b.onclick = async () => {
+    const h = histItem(b.dataset.hdl);
+    try {
+      const j = await api("/api/jobs/" + h.id);
+      if (!j.final) { toast(j.status === "en cours" ? "Cette voix off est encore en cours de génération." : "Cette génération n'a pas de MP3 final.", true); return; }
+      const a = document.createElement("a");
+      a.href = `${j.final}?name=${encodeURIComponent(h.title)}`; a.download = "";
+      document.body.appendChild(a); a.click(); a.remove();
+      markDownloaded(h.id);
+    } catch (e) {
+      if (/introuvable/.test(e.message)) { h.expired = true; save(); renderHistory(); toast("Ce fichier n'est plus sur le serveur (plus de 24 h ou redémarrage).", true, 6000); }
+      else toast(e.message, true);
+    }
+  });
+}
+$("#btnDownload").addEventListener("click", () => { if (JOB) markDownloaded(JOB.id); });
+
 function startPolling(id, scroll) {
   clearTimeout(pollT); chunkEls.clear(); $("#chunkList").innerHTML = ""; $("#leds").innerHTML = ""; outdated = false;
   $("#jobCard").hidden = false; $("#finalBox").hidden = true;
@@ -530,7 +586,11 @@ function startPolling(id, scroll) {
       if (JOB.status === "en cours") pollT = setTimeout(tick, 1500);
       else if (JOB.status === "termine" && scroll) toast("Voix off terminée !");
     } catch (e) {
-      if (/introuvable/.test(e.message)) { $("#jobCard").hidden = true; S.lastJob = ""; save(); }
+      if (/introuvable/.test(e.message)) {
+        $("#jobCard").hidden = true; S.lastJob = "";
+        const h = histItem(id); if (h) { h.expired = true; renderHistory(); }
+        save(); if (scroll) toast("Ce fichier n'est plus sur le serveur (plus de 24 h ou redémarrage).", true, 6000);
+      }
       else pollT = setTimeout(tick, 4000);
     }
   };
@@ -553,8 +613,10 @@ function renderJob(j) {
     const fa = $("#finalAudio");
     const ver = j.final + (JOB && JOB._ver || "");
     if (fa.dataset.src !== ver) { fa.dataset.src = ver; fa.src = j.final + "?v=" + Date.now(); }
-    const v = currentVoice();
-    $("#btnDownload").href = `${j.final}?name=${encodeURIComponent((v ? v.name : "voix") + "-voix-off")}`;
+    const h = histItem(j.id);
+    $("#btnDownload").href = `${j.final}?name=${encodeURIComponent(h ? h.title : "voix-off")}`;
+    $("#btnDownload").classList.toggle("done", !!(h && h.downloaded));
+    $("#btnDownload").textContent = h && h.downloaded ? "Déjà téléchargée · retélécharger" : "Télécharger le MP3";
     $("#btnReassemble").classList.toggle("primary", outdated);
     $("#btnReassemble").textContent = outdated ? "Réassembler avec tes corrections" : "Réassembler";
   }
@@ -739,7 +801,7 @@ script.value = S.script || "";
 $("#apiKey").value = S.apiKey || "";
 $("#apiBase").value = S.base || "https://api.minimax.io";
 $("#modelSelect").value = S.model || "speech-2.8-hd"; syncModelSeg();
-banners(); renderVoiceSelect(); renderVoices(); renderDico(); updateEstimate();
+banners(); renderVoiceSelect(); renderVoices(); renderDico(); updateEstimate(); renderHistory();
 if (S.lastJob) startPolling(S.lastJob, false);
 const old = S.voices.filter(v => !wasUsed(v) && daysSince(v.created) >= 4);
 if (old.length) setTimeout(() => toast(`Attention : ${old.map(v => v.name).join(", ")} n'a jamais été utilisée. Fais-lui lire une phrase avant 7 jours après le clonage, sinon MiniMax la supprime.`, true, 9000), 800);
