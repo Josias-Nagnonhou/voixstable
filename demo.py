@@ -39,6 +39,10 @@ def _to_mp3(y, sr=44100):
     return data
 
 
+import hashlib
+SPOKEN = {}   # empreinte audio -> texte lu (pour simuler la réécoute)
+
+
 class DemoClient:
     def __init__(self, *a, **k):
         pass
@@ -81,7 +85,21 @@ class DemoClient:
                 if i < parts - 1:
                     segs.append(np.zeros(int(44100 * pauses / (parts - 1))))
             y = np.concatenate(segs)
-        return _to_mp3(y), {"usage_characters": len(plain), "audio_length": int(len(y) / 44.1)}
+        data = _to_mp3(y)
+        SPOKEN[hashlib.sha1(data).hexdigest()] = plain
+        return data, {"usage_characters": len(plain), "audio_length": int(len(y) / 44.1)}
+
+    def transcribe(self, path, language="fr"):
+        time.sleep(0.3)
+        data = open(path, "rb").read()
+        txt = SPOKEN.get(hashlib.sha1(data).hexdigest())
+        if txt is None:
+            return "Mes bien-aimés, écoutez bien ce que je vais vous dire.", 6.0
+        words = txt.split()
+        if len(words) > 8 and random.random() < 0.15:     # mot sauté simulé
+            k = random.randrange(2, len(words) - 3)
+            del words[k:k + 3]
+        return " ".join(words), len(txt) / 14.5
 
     def voices(self, voice_type="voice_cloning"):
         return []

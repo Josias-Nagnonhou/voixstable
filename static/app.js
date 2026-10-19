@@ -274,6 +274,22 @@ const drop = $("#drop");
 drop.addEventListener("drop", e => { if (e.dataTransfer.files[0]) analyzeFile(e.dataTransfer.files[0]); });
 $("#fileInput").addEventListener("change", e => { if (e.target.files[0]) analyzeFile(e.target.files[0]); });
 
+async function transcribePrompt() {
+  if (!W.analysis || !S.apiKey) return;
+  const ta = $("#promptText");
+  ta.value = ""; ta.placeholder = "Transcription automatique en cours…"; ta.disabled = true;
+  $("#promptStatus").textContent = "";
+  try {
+    const r = await api("/api/transcribe-sample", { method: "POST", body: { sample_id: W.analysis.sample_id, language_boost: $("#voiceLang").value } });
+    ta.value = r.text;
+    $("#promptStatus").textContent = r.text ? "Rempli automatiquement. Corrige seulement si un mot est faux." : "Aucune parole reconnue dans l'extrait.";
+  } catch (e) {
+    $("#promptStatus").textContent = "Transcription impossible : " + e.message + " Tu peux l'écrire toi-même, ou laisser vide.";
+  } finally { ta.disabled = false; ta.placeholder = "Le texte de l'extrait apparaîtra ici."; }
+}
+
+$("#btnRetranscribe").onclick = () => transcribePrompt();
+
 async function analyzeFile(file) {
   $("#analyzing").hidden = false;
   try {
@@ -284,6 +300,7 @@ async function analyzeFile(file) {
     if (!$("#voiceName").value) $("#voiceName").value = file.name.replace(/\.[^.]+$/, "").slice(0, 40);
     renderAnalysis(a);
     wizStep(2);
+    transcribePrompt();
   } catch (e) { toast(e.message, true, 6000); }
   finally { $("#analyzing").hidden = true; }
 }
@@ -489,6 +506,7 @@ $("#btnGenerate").onclick = async () => {
     renderPreview(prep);
     const r = await api("/api/jobs", { method: "POST", body: {
       chunks: prep.chunks, voice: voicePayload(v), ref: v.ref || {}, threshold: +$("#threshold").value,
+      asr: $("#optAsr").checked, dictionary: S.dictionary,
       max_retries: +$("#retries").value } });
     v.lastUsed = Date.now(); v.usedOnce = true; S.lastJob = r.id; save(); renderVoices();
     startPolling(r.id, true);
@@ -521,6 +539,7 @@ const STATUS = {
 };
 function renderJob(j) {
   $("#jobPhase").textContent = j.error ? "Erreur : " + j.error : j.phase;
+  if (j.asr_note && !renderJob._noted) { renderJob._noted = true; toast(j.asr_note, true, 7000); }
   $("#jobBar").style.width = (j.status === "termine" ? 100 : Math.min(97, j.progress)) + "%";
   $("#stTotal").textContent = j.total; $("#stOk").textContent = j.ok; $("#stCheck").textContent = j.a_verifier;
   $("#stRegen").textContent = j.regenerations; $("#stCost").textContent = j.cost.fcfa.toLocaleString("fr-FR");

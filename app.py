@@ -26,6 +26,8 @@ for d in (SAMPLES, JOBS_DIR):
 PRICES = {"speech-2.8-hd": 100, "speech-2.8-turbo": 60, "speech-2.6-hd": 100,
           "speech-2.6-turbo": 60, "speech-02-hd": 100, "speech-02-turbo": 60}
 FCFA_PER_USD = 600
+ASR_USD_PER_HOUR = 0.38
+ASR_LANG = {"French": "fr", "English": "en", "Arabic": "ar", "auto": ""}
 
 app = FastAPI(title="VoixStable")
 JOBS = {}
@@ -48,8 +50,8 @@ def jsonable(o):
     return json.loads(json.dumps(o, default=lambda v: float(v) if hasattr(v, "__float__") else str(v)))
 
 
-def cost(chars, model):
-    usd = chars * PRICES.get(model, 100) / 1_000_000
+def cost(chars, model, asr_seconds=0.0):
+    usd = chars * PRICES.get(model, 100) / 1_000_000 + asr_seconds / 3600 * ASR_USD_PER_HOUR
     return {"usd": round(usd, 4), "fcfa": round(usd * FCFA_PER_USD)}
 
 
@@ -151,6 +153,16 @@ async def clone(request: Request, x_api_key: str = Header(""), x_api_base: str =
         prompt_text += "."
 
     def work():
+        nonlocal prompt_text
+        if not prompt_text and b.get("use_prompt", True):
+            try:
+                prompt_text, _ = cl.transcribe(os.path.join(d, "extrait.mp3"),
+                                               ASR_LANG.get(b.get("language_boost", "French"), "fr"))
+                prompt_text = re.sub(r"\s+", " ", prompt_text).strip()
+                if prompt_text and not re.search(r"[.!?]$", prompt_text):
+                    prompt_text += "."
+            except MiniMaxError:
+                prompt_text = ""
         fid = cl.upload(os.path.join(d, "echantillon.mp3"), "voice_clone")
         pid = None
         if prompt_text and b.get("use_prompt", True):
@@ -161,9 +173,25 @@ async def clone(request: Request, x_api_key: str = Header(""), x_api_base: str =
                        volume_norm=True, language_boost=b.get("language_boost", "French"))
         return res, pid is not None
     res, used_prompt = await run_blocking(work)
+    # prompt_text a pu être rempli automatiquement
     info = json.load(open(os.path.join(d, "info.json")))
     return {"voice_id": voice_id, "name": name, "analyse": info, "extrait_utilise": used_prompt,
             "demo": is_demo(x_api_key)}
+
+
+@app.post("/api/transcribe-sample")
+async def transcribe_sample(request: Request, x_api_key: str = Header(""), x_api_base: str = Header("")):
+    b = await request.json()
+    sid = b.get("sample_id", "")
+    p = os.path.join(SAMPLES, sid, "extrait.mp3")
+    if not re.fullmatch(r"[a-f0-9]{12}", sid) or not os.path.exists(p):
+        raise HTTPException(400, "Échantillon introuvable ou expiré, réimporte l'audio.")
+    cl = client_for(x_api_key, x_api_base)
+    text, dur = await run_blocking(cl.transcribe, p, ASR_LANG.get(b.get("language_boost", "French"), "fr"))
+    text = re.sub(r"\s+", " ", text).strip()
+    if text and not re.search(r"[.!?]$", text):
+        text += "."
+    return {"text": text, "cost": cost(0, "speech-2.8-hd", dur)}
 
 
 VARIANTS = {
@@ -302,6 +330,29 @@ class Job:
         self.created = time.time()
         self.lock = threading.Lock()
         self.job_ref = {}
+        self.asr = bool(b.get("asr", True))
+        self.asr_lang = ASR_LANG.get(self.voice.get("language_boost", "French"), "fr")
+        self.asr_seconds = 0.0
+        self.asr_note = None
+        self.dictionary = b.get("dictionary") or []
+
+    def listen(self, c, a):
+        """Réécoute : transcrit le morceau et vérifie qu'aucun mot ne manque."""
+        if not self.asr or a["metrics"].get("vide"):
+            return
+        try:
+            heard, dur = self.cl.transcribe(a["file"], self.asr_lang)
+        except MiniMaxError as e:
+            self.asr = False
+            self.asr_note = f"Réécoute automatique désactivée pour cette génération : {e}"
+            return
+        except Exception:
+            return
+        with self.lock:
+            self.asr_seconds += dur
+        res = textprep.heard_coverage(c["text"], heard, self.dictionary)
+        res["heard"] = heard
+        a["asr"] = res
 
     # -- un essai ----------------------------------------------------------
     def attempt(self, i, text_override=None):
@@ -324,12 +375,23 @@ class Job:
         m = audio.chunk_metrics(data, c["chars"], sum(pauses))
         with self.lock:
             self.chars_billed += int(extra.get("usage_characters") or c["chars"])
-            c["attempts"].append({"n": n, "file": path, "metrics": m, "score": None, "issues": []})
+            a = {"n": n, "file": path, "metrics": m, "score": None, "issues": []}
+            c["attempts"].append(a)
+        self.listen(c, a)
         return n, max(pauses) if pauses else 0.0
 
     def score_attempt(self, i, a, max_pause):
         ref = self.reference()
         s, issues = audio.judge(a["metrics"], ref, max_pause)
+        h = a.get("asr")
+        if h:
+            cov = h["coverage"]
+            m = len(h["missing"])
+            pen = max((0.97 - cov) * 420 if cov < 0.97 else 0, 12 if m == 1 else 20 * m)
+            s = int(max(0, s - pen))
+            if m >= 2 or cov < 0.92:
+                miss = ", ".join(h["missing"][:6])
+                issues = issues + [f"Mots sautés ou mal lus ({round(cov * 100)} % entendus)" + (f" : {miss}" if miss else "")]
         a["score"], a["issues"] = s, issues
         return s
 
@@ -466,7 +528,8 @@ class Job:
             "ok": sum(1 for c in self.chunks if c["status"] == "ok"),
             "a_verifier": sum(1 for c in self.chunks if c["status"] == "a_verifier"),
             "regenerations": sum(max(0, len(c["attempts"]) - 1) for c in self.chunks),
-            "cost": cost(self.chars_billed, self.model),
+            "cost": cost(self.chars_billed, self.model, self.asr_seconds),
+            "asr": self.asr, "asr_note": self.asr_note,
             "final": f"/api/jobs/{self.id}/final.mp3" if self.final else None,
             "chunks": chunks,
         })

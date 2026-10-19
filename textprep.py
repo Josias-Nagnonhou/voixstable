@@ -381,3 +381,45 @@ def diff_preview(original, prepared):
                     seen.add(key)
                     changes.append({"avant": before, "apres": after})
     return changes[:300]
+
+
+# ---------------------------------------------------------------------------
+# Réécoute : le texte entendu correspond-il au texte attendu ?
+# ---------------------------------------------------------------------------
+
+def _norm_words(text, dictionary=None):
+    t = clean_characters(text or "")
+    t = apply_dictionary(t, dictionary)
+    t = numbers(t)
+    t = unicodedata.normalize("NFKD", t.lower())
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+    t = re.sub(r"<#[\d.]+#>", " ", t)
+    t = re.sub(r"[^a-z0-9]+", " ", t)
+    return t.split()
+
+
+def heard_coverage(expected, heard, dictionary=None):
+    """Renvoie {"coverage": 0-1, "missing": [mots non entendus]}."""
+    import difflib
+    a = _norm_words(expected, dictionary)
+    b = _norm_words(heard, dictionary)
+    if not a:
+        return {"coverage": 1.0, "missing": []}
+    sm = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
+    matched = 0
+    missing = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            matched += i2 - i1
+        elif tag in ("delete", "replace"):
+            seg_a, seg_b = a[i1:i2], b[j1:j2]
+            # tolère les petites différences d'orthographe (noms propres…)
+            ok = 0
+            if tag == "replace" and seg_b:
+                ra = difflib.SequenceMatcher(a=" ".join(seg_a), b=" ".join(seg_b)).ratio()
+                if ra >= 0.72:
+                    ok = len(seg_a)
+            matched += ok
+            if not ok:
+                missing.extend(seg_a)
+    return {"coverage": round(matched / len(a), 3), "missing": missing[:12]}

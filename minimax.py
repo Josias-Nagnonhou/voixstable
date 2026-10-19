@@ -1,4 +1,5 @@
 """Client minimal de l'API MiniMax (voix)."""
+import os
 import time
 
 import requests
@@ -122,6 +123,44 @@ class Client:
             raise MiniMaxError(1000, "aucun audio reçu")
         extra = data.get("extra_info") or {}
         return bytes.fromhex(audio_hex), extra
+
+    # -- Transcription (réécoute) -----------------------------------------
+    def transcribe(self, path, language="fr"):
+        """Renvoie (texte, durée_en_secondes). Facturé à la durée audio."""
+        headers = {"Authorization": f"Bearer {self.key}"}
+        if language:
+            headers["language"] = language
+        last = None
+        for attempt in range(3):
+            try:
+                with open(path, "rb") as f:
+                    r = requests.post(self.base + "/v1/speech_to_text", headers=headers,
+                                      data={"model": "asr-1.0", "response_format": "json"},
+                                      files={"file": (os.path.basename(path), f, "audio/mpeg")},
+                                      timeout=120)
+            except requests.RequestException as e:
+                last = MiniMaxError(1001, str(e)[:120])
+                time.sleep(2 * (attempt + 1))
+                continue
+            if r.status_code < 400:
+                try:
+                    d = r.json()
+                except Exception:
+                    raise MiniMaxError(1000, "réponse de transcription illisible")
+                br = d.get("base_resp") or {}
+                if br.get("status_code", 0) != 0:
+                    raise MiniMaxError(br.get("status_code"), br.get("status_msg", ""))
+                return (d.get("text") or "").strip(), float(d.get("duration") or 0)
+            try:
+                msg = (r.json().get("error") or {}).get("message", "")
+            except Exception:
+                msg = r.text[:120]
+            code = {401: 1004, 402: 1008, 429: 1002, 500: 1013}.get(r.status_code, r.status_code)
+            last = MiniMaxError(code, msg)
+            if r.status_code not in (429, 500, 502, 503):
+                raise last
+            time.sleep(2 * (attempt + 1))
+        raise last
 
     # -- Voix --------------------------------------------------------------
     def voices(self, voice_type="voice_cloning"):
