@@ -33,6 +33,9 @@
 <div id="keyBanner" class="banner hidden">
   Ajoute ta clé API MiniMax dans <a href="#" data-goto="reglages">Réglages</a>. Pour découvrir l'outil sans clé, tape <b>demo</b> comme clé.
 </div>
+<div id="lowBalance" class="banner low hidden">
+  Ton solde MiniMax estimé passe sous 3 $. Pense à recharger : <a href="https://platform.minimax.io/user-center/payment/balance" target="_blank" rel="noopener">recharger sur MiniMax</a>, puis mets à jour le solde dans <a href="#" data-goto="reglages">Réglages</a>.
+</div>
 <div id="demoBanner" class="banner demo hidden">
   Mode démo : les « voix » sont des sons de test. Aucun crédit n'est dépensé. Mets ta vraie clé dans Réglages pour de vraies voix.
 </div>
@@ -417,6 +420,25 @@
       <button class="btn primary" id="btnSaveKey">Enregistrer et vérifier</button>
     </div>
     <p id="keyStatus" class="status"></p>
+  </div>
+
+  <div class="card" id="balanceCard">
+    <h2>Mon solde MiniMax</h2>
+    <div class="bal-top">
+      <b id="balLeft" class="bal-num">—</b>
+      <span class="muted small" id="balSub"></span>
+    </div>
+    <div class="bal-meter"><div id="balBar"></div></div>
+    <div id="balList" class="spend-list"></div>
+    <div class="row wrap" style="margin-top:16px;margin-bottom:6px">
+      <label class="field grow"><span>Solde affiché sur MiniMax en ce moment (en $)</span><input id="balInput" inputmode="decimal" placeholder="25"></label>
+      <button class="btn primary" id="btnBalSave">Mettre à jour</button>
+    </div>
+    <p class="muted small">C'est une estimation : l'outil retire tout ce qu'il dépense (voix off, réécoute, tests, clonages). Ce que tu utilises ailleurs n'est pas compté. Mets à jour après chaque recharge, ou de temps en temps avec le montant exact.</p>
+    <div class="actions" style="justify-content:flex-start">
+      <a class="btn ghost small" href="https://platform.minimax.io/user-center/payment/balance" target="_blank" rel="noopener">Voir le solde exact sur MiniMax</a>
+      <a class="btn ghost small" href="https://platform.minimax.io/user-center/payment/balance" target="_blank" rel="noopener">Recharger</a>
+    </div>
   </div>
 
   <div class="card">

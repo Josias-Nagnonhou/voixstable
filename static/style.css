@@ -385,3 +385,13 @@ audio { color-scheme: inherit; }
 .dvar { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 16px; background: var(--field); border: 1px solid var(--line); }
 .dvar b { font-size: 1.05rem; }
 .dvar audio { width: 100%; height: 38px; }
+
+.bal-top { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 4px 0 12px; }
+.bal-num { font-size: 2.2rem; font-weight: 700; letter-spacing: -.02em; }
+.bal-meter { height: 10px; border-radius: 99px; background: var(--led-off); overflow: hidden; }
+.bal-meter > div { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, var(--v1), var(--v2)); transition: width .5s ease; }
+.bal-meter > div.low { background: linear-gradient(90deg, var(--warn), var(--bad)); }
+.spend-list { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; }
+.spend { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 8px 12px; border-radius: 12px; background: var(--field); font-size: .86rem; }
+.spend span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.banner.low { border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); background: var(--bad-bg); }

@@ -34,6 +34,7 @@ async function api(path, { method = "GET", body, form } = {}) {
   const r = await fetch(path, { method, headers, body: payload });
   let data = null;
   try { data = await r.json(); } catch (e) { /* vide */ }
+  if (r.ok && data && !isDemo()) trackSpend(path, data);
   if (!r.ok) {
     let msg = data && data.detail ? data.detail : `Erreur ${r.status}`;
     if (Array.isArray(msg)) msg = msg.map(m => m.msg).join(", ");
@@ -41,6 +42,47 @@ async function api(path, { method = "GET", body, form } = {}) {
   }
   return data;
 }
+/* ---------------- Suivi des dépenses MiniMax ---------------- */
+const SPEND_LABEL = { "/api/speak": "Test d'écoute", "/api/test-variants": "Test des 3 versions", "/api/transcribe-sample": "Transcription de l'extrait" };
+function recordSpend(key, usd, label) {
+  if (!(usd > 0)) return;
+  S.spend = S.spend || [];
+  const ex = S.spend.find(x => x.key === key);
+  if (ex) { if (usd > ex.usd) { ex.usd = usd; ex.at = Date.now(); } }
+  else S.spend.push({ key, usd, label, at: Date.now() });
+  if (S.spend.length > 600) S.spend = S.spend.slice(-600);
+  save(); renderBalance();
+}
+function trackSpend(path, data) {
+  if (path === "/api/clone" && data.voice_id) recordSpend("clone:" + data.voice_id, 1.5, "Clonage : " + (data.name || data.voice_id));
+  const base = path.split("?")[0];
+  if (SPEND_LABEL[base] && data.cost) recordSpend(base + ":" + Date.now() + Math.random(), data.cost.usd, SPEND_LABEL[base]);
+}
+function spentSince(ts) { return (S.spend || []).filter(x => x.at >= ts).reduce((a, x) => a + x.usd, 0); }
+function balanceEstimate() {
+  const b = S.balance; if (!b) return null;
+  return { left: b.usd - spentSince(b.at), spent: spentSince(b.at), base: b.usd, at: b.at };
+}
+function renderBalance() {
+  const est = balanceEstimate();
+  const low = est && est.left < 3;
+  const lb = document.getElementById("lowBalance");
+  if (lb) lb.classList.toggle("hidden", !low || isDemo());
+  if (!document.getElementById("balLeft")) return;
+  if (!est) {
+    $("#balLeft").textContent = "—"; $("#balSub").textContent = "Indique ton solde actuel ci-dessous pour activer le suivi.";
+    $("#balBar").style.width = "0%"; $("#balList").innerHTML = ""; return;
+  }
+  const left = Math.max(0, est.left);
+  $("#balLeft").textContent = `${left.toFixed(2).replace(".", ",")} $`;
+  $("#balSub").textContent = `≈ ${fcfa(left * FCFA)} · environ ${Math.floor(left / 1.6)} voix off de 15 min en HD · ${est.spent.toFixed(2).replace(".", ",")} $ dépensés depuis le ${fmtDate(est.at)}`;
+  $("#balBar").style.width = Math.max(0, Math.min(100, left / est.base * 100)) + "%";
+  $("#balBar").classList.toggle("low", low);
+  const recent = (S.spend || []).filter(x => x.at >= est.at).slice(-8).reverse();
+  $("#balList").innerHTML = recent.length ? recent.map(x => `<div class="spend"><span>${esc(x.label)}</span><span class="muted small">${fmtDate(x.at)}</span><b>${x.usd < 0.01 ? "< 0,01" : x.usd.toFixed(2).replace(".", ",")} $</b></div>`).join("")
+    : `<p class="muted small">Aucune dépense depuis ta dernière mise à jour du solde.</p>`;
+}
+
 const fcfa = n => `${Math.round(n).toLocaleString("fr-FR")} FCFA`;
 const isDemo = () => (S.apiKey || "").trim().toLowerCase() === "demo";
 
@@ -711,6 +753,7 @@ const STATUS = {
   correction: ["Correction…", "run"], ok: ["Parfait", "ok"], a_verifier: ["À écouter", "warn"], erreur: ["Erreur", "bad"],
 };
 function renderJob(j) {
+  if (!isDemo() && j.cost) recordSpend("job:" + j.id, j.cost.usd, "Voix off : " + ((histItem(j.id) || {}).title || "génération"));
   $("#jobPhase").textContent = j.error ? "Erreur : " + j.error : j.phase;
   if (j.asr_note && !renderJob._noted) { renderJob._noted = true; toast(j.asr_note, true, 7000); }
   $("#jobBar").style.width = (j.status === "termine" ? 100 : Math.min(97, j.progress)) + "%";
@@ -901,6 +944,12 @@ $("#chipQua").onclick = () => {
 };
 
 /* ---------------- Réglages ---------------- */
+$("#btnBalSave").onclick = () => {
+  const v = parseFloat(String($("#balInput").value).replace(",", "."));
+  if (!(v >= 0)) { toast("Écris le montant en dollars affiché sur MiniMax (exemple : 25 ou 23,40).", true); return; }
+  S.balance = { usd: v, at: Date.now() }; save(); renderBalance();
+  $("#balInput").value = ""; toast("Solde enregistré. L'outil va maintenant décompter chaque dépense.");
+};
 $("#apiKey").value = S.apiKey || "";
 $("#apiBase").value = S.base || "https://api.minimax.io";
 $("#btnShowKey").onclick = () => {
@@ -948,7 +997,7 @@ script.value = S.script || "";
 $("#apiKey").value = S.apiKey || "";
 $("#apiBase").value = S.base || "https://api.minimax.io";
 $("#modelSelect").value = S.model || "speech-2.8-hd"; syncModelSeg();
-banners(); renderVoiceSelect(); renderVoices(); renderDico(); updateEstimate(); renderHistory();
+banners(); renderVoiceSelect(); renderVoices(); renderDico(); updateEstimate(); renderHistory(); renderBalance();
 if (S.lastJob) startPolling(S.lastJob, false);
 if (location.hash === "#historique") { showTab("historique"); history.replaceState(null, "", location.pathname); }
 const old = S.voices.filter(v => !wasUsed(v) && daysSince(v.created) >= 4);
