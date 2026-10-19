@@ -20,6 +20,7 @@
   <nav class="tabs" role="tablist">
     <button class="tab active" data-tab="studio">Studio</button>
     <button class="tab" data-tab="voix">Mes voix</button>
+    <button class="tab" data-tab="historique">Historique</button>
     <button class="tab" data-tab="dico">Dictionnaire</button>
     <button class="tab" data-tab="reglages">Réglages</button>
   </nav>
@@ -136,6 +137,7 @@
     <div id="finalBox" class="final" hidden>
       <div>
         <h3>Ta voix off est prête</h3>
+        <p class="muted small" id="driveNote" style="margin:0 0 8px"></p>
         <audio id="finalAudio" controls preload="none"></audio>
       </div>
       <div class="final-actions">
@@ -149,14 +151,6 @@
     <div id="chunkList" class="chunk-list"></div>
   </div>
 
-  <div class="card" id="historyCard" hidden>
-    <div class="card-head">
-      <h2>Mes générations</h2>
-      <span class="muted small" id="historyMeta"></span>
-    </div>
-    <p class="muted small">Les voix off déjà téléchargées sont marquées en doré. Les fichiers restent sur le serveur environ 24 h : télécharge-les avant.</p>
-    <div id="historyList" class="history-list"></div>
-  </div>
 </section>
 
 <!-- ===================== VOIX ===================== -->
@@ -328,6 +322,51 @@
       <button class="btn danger ghost small" id="btnEdDelete">Supprimer cette voix</button>
       <button class="btn primary" id="btnEdSave">Enregistrer</button>
     </div>
+  </div>
+</section>
+
+<!-- ===================== HISTORIQUE ===================== -->
+<section id="historique" class="panel">
+  <div class="card-head page-head">
+    <h2>Historique</h2>
+    <span class="muted" id="historyMeta"></span>
+  </div>
+
+  <div class="card drive-card" id="driveCard">
+    <div class="drive-head">
+      <span class="drive-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="#0f9d58" d="M8.2 3h7.6l6.2 10.7-3.8 6.6L12 9.6z"/><path fill="#fbbc04" d="M8.2 3 2 13.7l3.8 6.6L12 9.6z"/><path fill="#4285f4" d="M5.8 20.3h12.4l3.8-6.6H9.6z"/></svg>
+      </span>
+      <div class="drive-text"><b id="driveTitle">Google Drive</b><span class="muted small" id="driveSub">Vérification…</span></div>
+      <button class="btn primary small" id="btnDriveConnect" hidden>Connecter Google Drive</button>
+    </div>
+    <div class="drive-body" id="driveBody" hidden>
+      <div class="drive-meter"><div id="driveMeterBar"></div></div>
+      <div class="row wrap" style="margin-top:14px;margin-bottom:0">
+        <label class="field grow"><span>Suppression automatique dans le Drive</span>
+          <select id="driveCleanup">
+            <option value="0">Jamais : je vide moi-même</option>
+            <option value="30">Après 30 jours</option>
+            <option value="60">Après 60 jours</option>
+            <option value="90">Après 90 jours</option>
+            <option value="180">Après 6 mois</option>
+          </select></label>
+      </div>
+      <p class="muted small" style="margin:8px 0 0">Les voix off supprimées vont dans la corbeille de ton Drive : tu as encore 30 jours pour les récupérer.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row wrap" style="margin-bottom:14px">
+      <label class="field grow"><span>Rechercher</span><input id="histSearch" placeholder="Un mot du texte ou le nom d'une voix"></label>
+      <label class="field"><span>Afficher</span>
+        <select id="histFilter">
+          <option value="all">Tout</option>
+          <option value="todo">Pas encore téléchargées</option>
+          <option value="done">Téléchargées</option>
+        </select></label>
+    </div>
+    <div id="historyList" class="history-list"></div>
   </div>
 </section>
 

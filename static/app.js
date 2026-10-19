@@ -46,6 +46,7 @@ const isDemo = () => (S.apiKey || "").trim().toLowerCase() === "demo";
 
 /* ---------------- Navigation ---------------- */
 function showTab(name) {
+  if (name === "historique") { renderHistory(); loadDrive(); }
   $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
   $$(".panel").forEach(p => p.classList.toggle("active", p.id === name));
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -511,6 +512,7 @@ $("#btnGenerate").onclick = async () => {
     const r = await api("/api/jobs", { method: "POST", body: {
       chunks: prep.chunks, voice: voicePayload(v), ref: v.ref || {}, threshold: +$("#threshold").value,
       asr: $("#optAsr").checked, dictionary: S.dictionary, pause_mode: pauseMode(v),
+      title: fileTitle(script.value), voice_name: v.name,
       max_retries: +$("#retries").value } });
     v.lastUsed = Date.now(); v.usedOnce = true; S.lastJob = r.id;
     S.history = [{ id: r.id, title: fileTitle(script.value), voice: v.name, at: Date.now(), downloaded: false }, ...(S.history || [])].slice(0, 60);
@@ -530,49 +532,156 @@ function fileTitle(text) {
 }
 function histItem(id) { return (S.history || []).find(h => h.id === id); }
 function markDownloaded(id) {
-  const h = histItem(id); if (!h) return;
-  h.downloaded = true; h.downloadedAt = Date.now(); save(); renderHistory();
+  const h = histItem(id);
+  if (h) { h.downloaded = true; h.downloadedAt = Date.now(); save(); }
+  const d = DRIVE.files.find(f => f.job === id || (h && f.id === h.driveId));
+  if (d) d.downloaded = true;
+  renderHistory();
   if (JOB && JOB.id === id) renderJob(JOB);
 }
 function fmtDate(ts) {
   const d = new Date(ts);
-  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + " à " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit" }) + " à " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
-function renderHistory() {
-  const H = S.history || [];
-  $("#historyCard").hidden = !H.length;
-  if (!H.length) return;
-  const done = H.filter(h => h.downloaded).length;
-  $("#historyMeta").textContent = `${done} téléchargée${done > 1 ? "s" : ""} sur ${H.length}`;
-  $("#historyList").innerHTML = H.map(h => `
-    <div class="hrow ${h.downloaded ? "dl" : ""} ${h.expired ? "exp" : ""}" data-hid="${esc(h.id)}">
-      <span class="hmark" aria-hidden="true">${h.downloaded ? "✓" : ""}</span>
-      <div class="htext"><b>${esc(h.title)}</b>
-        <span class="muted small">${esc(h.voice || "")} · ${fmtDate(h.at)}</span></div>
-      <span class="hbadge">${h.expired ? "Expirée" : h.downloaded ? "Téléchargée" : "Pas téléchargée"}</span>
-      <div class="row-tight">
-        <button class="btn ghost small" data-hopen="${esc(h.id)}">Ouvrir</button>
-        <button class="btn ${h.downloaded ? "ghost" : "primary"} small" data-hdl="${esc(h.id)}">Télécharger</button>
-        <button class="btn ghost small" data-hdel="${esc(h.id)}" aria-label="Retirer de la liste" title="Retirer de la liste">✕</button>
-      </div>
-    </div>`).join("");
-  $$("[data-hopen]").forEach(b => b.onclick = () => startPolling(b.dataset.hopen, true));
-  $$("[data-hdel]").forEach(b => b.onclick = () => { S.history = S.history.filter(h => h.id !== b.dataset.hdel); save(); renderHistory(); });
-  $$("[data-hdl]").forEach(b => b.onclick = async () => {
-    const h = histItem(b.dataset.hdl);
-    try {
-      const j = await api("/api/jobs/" + h.id);
-      if (!j.final) { toast(j.status === "en cours" ? "Cette voix off est encore en cours de génération." : "Cette génération n'a pas de MP3 final.", true); return; }
-      const a = document.createElement("a");
-      a.href = `${j.final}?name=${encodeURIComponent(h.title)}`; a.download = "";
-      document.body.appendChild(a); a.click(); a.remove();
-      markDownloaded(h.id);
-    } catch (e) {
-      if (/introuvable/.test(e.message)) { h.expired = true; save(); renderHistory(); toast("Ce fichier n'est plus sur le serveur (plus de 24 h ou redémarrage).", true, 6000); }
-      else toast(e.message, true);
+function fmtSize(b) { return b >= 1e9 ? (b / 1e9).toFixed(1).replace(".", ",") + " Go" : Math.max(1, Math.round(b / 1e6)) + " Mo"; }
+function fmtDur(s) { s = Math.round(s || 0); return s ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")}` : ""; }
+
+const DRIVE = { status: null, files: [], loaded: false };
+async function loadDrive() {
+  try {
+    DRIVE.status = await api("/api/drive/status");
+    if (DRIVE.status.connected && !DRIVE.status.error) {
+      DRIVE.files = (await api("/api/drive/files")).files;
+      DRIVE.loaded = true;
     }
+  } catch (e) { DRIVE.status = { error: e.message }; }
+  renderDrive(); renderHistory();
+}
+function renderDrive() {
+  const st = DRIVE.status || {};
+  const btn = $("#btnDriveConnect"), body = $("#driveBody");
+  btn.hidden = true; body.hidden = true;
+  if (st.error && !st.connected) { $("#driveSub").textContent = "Impossible de vérifier le Drive : " + st.error; return; }
+  if (!st.configured) { $("#driveSub").textContent = "Pas encore configuré sur le serveur."; return; }
+  if (!st.connected) {
+    $("#driveSub").textContent = "Pas connecté. Connecte-le pour garder toutes tes voix off, même des mois après.";
+    btn.hidden = false; return;
+  }
+  if (st.error) { $("#driveSub").textContent = "Connecté, mais Google répond : " + st.error; btn.hidden = false; btn.textContent = "Reconnecter"; return; }
+  const used = st.storage?.used || 0, limit = st.storage?.limit || 0;
+  $("#driveTitle").textContent = "Google Drive connecté";
+  $("#driveSub").textContent = `Dossier « VoixStable » : ${st.count || 0} voix off · ${fmtSize(st.folder_bytes || 0)}` +
+    (limit ? ` · Drive rempli à ${Math.round(used / limit * 100)} % (${fmtSize(used)} sur ${fmtSize(limit)})` : "");
+  body.hidden = false;
+  $("#driveMeterBar").style.width = (limit ? Math.min(100, used / limit * 100) : 0) + "%";
+  $("#driveMeterBar").classList.toggle("high", limit && used / limit > 0.85);
+  $("#driveCleanup").value = String(st.settings?.cleanup_days || 0);
+}
+$("#btnDriveConnect").onclick = () => { location.href = "/oauth/start"; };
+$("#driveCleanup").onchange = async () => {
+  const days = +$("#driveCleanup").value;
+  if (days && !confirm(`Les voix off de plus de ${days} jours seront mises à la corbeille du Drive, maintenant et ensuite chaque jour. Continuer ?`)) {
+    $("#driveCleanup").value = String(DRIVE.status?.settings?.cleanup_days || 0); return;
+  }
+  try {
+    const r = await api("/api/drive/settings", { method: "POST", body: { cleanup_days: days } });
+    toast(days ? `Suppression automatique réglée sur ${days} jours.` + (r.removed ? ` ${r.removed} ancienne(s) voix off mise(s) à la corbeille.` : "") : "Suppression automatique désactivée.");
+    loadDrive();
+  } catch (e) { toast(e.message, true); }
+};
+
+function historyEntries() {
+  const local = S.history || [];
+  const byJob = new Map(local.map(h => [h.id, h]));
+  const out = [];
+  const seen = new Set();
+  for (const f of DRIVE.files) {
+    const h = byJob.get(f.job);
+    if (h) seen.add(h.id);
+    out.push({ key: "d:" + f.id, driveId: f.id, jobId: f.job, title: f.title, voice: f.voice || h?.voice || "",
+               at: Date.parse(f.created) || h?.at, downloaded: f.downloaded || !!h?.downloaded,
+               size: f.size, duration: f.duration, where: "drive" });
+  }
+  for (const h of local) {
+    if (seen.has(h.id) || (h.driveId && DRIVE.files.some(f => f.id === h.driveId))) continue;
+    out.push({ key: "j:" + h.id, jobId: h.id, title: h.title, voice: h.voice, at: h.at,
+               downloaded: !!h.downloaded, where: h.expired ? "expiree" : "serveur" });
+  }
+  return out.sort((x, y) => (y.at || 0) - (x.at || 0));
+}
+
+function renderHistory() {
+  const all = historyEntries();
+  const q = ($("#histSearch").value || "").toLowerCase().trim();
+  const f = $("#histFilter").value;
+  const list = all.filter(e => (!q || (e.title + " " + e.voice).toLowerCase().includes(q)) &&
+    (f === "all" || (f === "done" ? e.downloaded : !e.downloaded)));
+  const done = all.filter(e => e.downloaded).length;
+  $("#historyMeta").textContent = all.length ? `${all.length} voix off · ${done} téléchargée${done > 1 ? "s" : ""}` : "";
+  if (!all.length) {
+    $("#historyList").innerHTML = `<div class="empty"><h3>Aucune voix off pour le moment</h3><p>Chaque voix off générée dans le Studio apparaîtra ici.</p></div>`;
+    return;
+  }
+  if (!list.length) { $("#historyList").innerHTML = `<p class="muted">Aucun résultat.</p>`; return; }
+  const BADGE = { drive: "Dans ton Drive", serveur: "Sur le serveur (24 h)", expiree: "Expirée" };
+  $("#historyList").innerHTML = list.map(e => `
+    <div class="hrow ${e.downloaded ? "dl" : ""} ${e.where === "expiree" ? "exp" : ""}" data-key="${esc(e.key)}">
+      <span class="hmark" aria-hidden="true">${e.downloaded ? "✓" : ""}</span>
+      <div class="htext"><b title="${esc(e.title)}">${esc(e.title)}</b>
+        <span class="muted small">${[esc(e.voice), e.at ? fmtDate(e.at) : "", fmtDur(e.duration), e.size ? fmtSize(e.size) : ""].filter(Boolean).join(" · ")}</span></div>
+      <div class="hbadges"><span class="hbadge">${e.downloaded ? "Téléchargée" : "Pas téléchargée"}</span><span class="hwhere ${e.where}">${BADGE[e.where]}</span></div>
+      <div class="row-tight">
+        ${e.where !== "expiree" ? `<button class="btn ghost small" data-hplay>Écouter</button>` : ""}
+        ${e.where === "serveur" ? `<button class="btn ghost small" data-hopen>Ouvrir</button>` : ""}
+        ${e.where !== "expiree" ? `<button class="btn ${e.downloaded ? "ghost" : "primary"} small" data-hdl>Télécharger</button>` : ""}
+        <button class="btn ghost small" data-hdel aria-label="Supprimer" title="${e.where === "drive" ? "Supprimer du Drive" : "Retirer de la liste"}">✕</button>
+      </div>
+      <audio class="hplayer" controls preload="none" hidden></audio>
+    </div>`).join("");
+  const entry = el => all.find(x => x.key === el.closest(".hrow").dataset.key);
+  $$("#historyList [data-hplay]").forEach(b => b.onclick = async () => {
+    const e = entry(b), row = b.closest(".hrow"), a = $(".hplayer", row);
+    if (!a.hidden) { a.pause(); a.hidden = true; return; }
+    let src = e.driveId ? `/api/drive/files/${e.driveId}/audio` : null;
+    if (!src) {
+      try { const j = await api("/api/jobs/" + e.jobId); src = j.final; if (!src) { toast("Pas encore de MP3 final pour cette génération.", true); return; } }
+      catch (err) { expire(e.jobId); return; }
+    }
+    $$("#historyList .hplayer").forEach(x => { x.pause(); x.hidden = true; });
+    a.hidden = false; a.src = src; a.play().catch(() => {});
+  });
+  $$("#historyList [data-hopen]").forEach(b => b.onclick = () => { showTab("studio"); startPolling(entry(b).jobId, true); });
+  $$("#historyList [data-hdl]").forEach(b => b.onclick = async () => {
+    const e = entry(b);
+    let href;
+    if (e.driveId) href = `/api/drive/files/${e.driveId}/download?name=${encodeURIComponent(e.title)}`;
+    else {
+      try { const j = await api("/api/jobs/" + e.jobId); if (!j.final) { toast("Pas encore de MP3 final pour cette génération.", true); return; } href = `${j.final}?dl=1&name=${encodeURIComponent(e.title)}`; }
+      catch (err) { expire(e.jobId); return; }
+    }
+    const a = document.createElement("a"); a.href = href; a.download = "";
+    document.body.appendChild(a); a.click(); a.remove();
+    if (e.jobId) markDownloaded(e.jobId);
+    const d = DRIVE.files.find(x => x.id === e.driveId); if (d) { d.downloaded = true; renderHistory(); }
+  });
+  $$("#historyList [data-hdel]").forEach(b => b.onclick = async () => {
+    const e = entry(b);
+    if (e.where === "drive") {
+      if (!confirm(`Supprimer « ${e.title} » de ton Google Drive ?\nElle ira dans la corbeille du Drive (récupérable pendant 30 jours).`)) return;
+      try { await api(`/api/drive/files/${e.driveId}/delete`, { method: "POST" }); } catch (err) { toast(err.message, true); return; }
+      DRIVE.files = DRIVE.files.filter(x => x.id !== e.driveId);
+      if (DRIVE.status) DRIVE.status.count = Math.max(0, (DRIVE.status.count || 1) - 1);
+      renderDrive();
+    }
+    S.history = (S.history || []).filter(h => h.id !== e.jobId); save(); renderHistory();
   });
 }
+function expire(jobId) {
+  const h = histItem(jobId); if (h) { h.expired = true; save(); }
+  renderHistory(); toast("Ce fichier n'est plus sur le serveur (plus de 24 h ou redémarrage).", true, 6000);
+}
+$("#histSearch").addEventListener("input", renderHistory);
+$("#histFilter").addEventListener("change", renderHistory);
 $("#btnDownload").addEventListener("click", () => { if (JOB) markDownloaded(JOB.id); });
 
 function startPolling(id, scroll) {
@@ -614,9 +723,11 @@ function renderJob(j) {
     const ver = j.final + (JOB && JOB._ver || "");
     if (fa.dataset.src !== ver) { fa.dataset.src = ver; fa.src = j.final + "?v=" + Date.now(); }
     const h = histItem(j.id);
-    $("#btnDownload").href = `${j.final}?name=${encodeURIComponent(h ? h.title : "voix-off")}`;
+    $("#btnDownload").href = `${j.final}?dl=1&name=${encodeURIComponent(h ? h.title : "voix-off")}`;
+    if (h && j.drive_id && h.driveId !== j.drive_id) { h.driveId = j.drive_id; save(); }
     $("#btnDownload").classList.toggle("done", !!(h && h.downloaded));
     $("#btnDownload").textContent = h && h.downloaded ? "Déjà téléchargée · retélécharger" : "Télécharger le MP3";
+    $("#driveNote").textContent = { envoi: "Envoi dans ton Google Drive…", ok: "Rangée dans ton Google Drive (dossier VoixStable).", erreur: "L'envoi dans le Drive a échoué. Télécharge-la avant 24 h." }[j.drive_status] || "";
     $("#btnReassemble").classList.toggle("primary", outdated);
     $("#btnReassemble").textContent = outdated ? "Réassembler avec tes corrections" : "Réassembler";
   }
@@ -803,6 +914,7 @@ $("#apiBase").value = S.base || "https://api.minimax.io";
 $("#modelSelect").value = S.model || "speech-2.8-hd"; syncModelSeg();
 banners(); renderVoiceSelect(); renderVoices(); renderDico(); updateEstimate(); renderHistory();
 if (S.lastJob) startPolling(S.lastJob, false);
+if (location.hash === "#historique") { showTab("historique"); history.replaceState(null, "", location.pathname); }
 const old = S.voices.filter(v => !wasUsed(v) && daysSince(v.created) >= 4);
 if (old.length) setTimeout(() => toast(`Attention : ${old.map(v => v.name).join(", ")} n'a jamais été utilisée. Fais-lui lire une phrase avant 7 jours après le clonage, sinon MiniMax la supprime.`, true, 9000), 800);
 })();

@@ -1,6 +1,9 @@
 """VoixStable — voix off MiniMax constantes, sans gaspiller de crédits."""
+import base64
 import json
+import logging
 import os
+import secrets
 import re
 import shutil
 import threading
@@ -9,10 +12,12 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, RedirectResponse,
+                               Response, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 
 import audio
+import gdrive as G
 import textprep
 from demo import DemoClient
 from minimax import Client, MiniMaxError
@@ -29,9 +34,38 @@ FCFA_PER_USD = 600
 ASR_USD_PER_HOUR = 0.38
 ASR_LANG = {"French": "fr", "English": "en", "Arabic": "ar", "auto": ""}
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("voixstable")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
 app = FastAPI(title="VoixStable")
 JOBS = {}
 LOCK = threading.Lock()
+PUBLIC_PATHS = {"/api/health", "/oauth/callback", "/favicon.ico"}
+
+_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{t}</title><style>body{{font-family:system-ui,sans-serif;max-width:640px;margin:60px auto;padding:0 18px;line-height:1.6;color:#17142b;background:#f4f2fb}}
+a{{color:#6d4aff;font-weight:600}}</style></head><body><h1>{t}</h1>{b}</body></html>"""
+
+
+@app.middleware("http")
+async def auth(request: Request, call_next):
+    """Mot de passe du site (APP_PASSWORD). Le navigateur le demande une fois et s'en souvient."""
+    if not APP_PASSWORD or request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+    h = request.headers.get("authorization", "")
+    if h.startswith("Basic "):
+        try:
+            _, pwd = base64.b64decode(h[6:]).decode().split(":", 1)
+            if secrets.compare_digest(pwd, APP_PASSWORD):
+                return await call_next(request)
+        except Exception:
+            pass
+    return Response("Mot de passe requis.", status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="VoixStable", charset="UTF-8"'})
+
+
+G.load_token()
 
 
 def client_for(key, base=None):
@@ -337,6 +371,11 @@ class Job:
         self.asr_note = None
         self.dictionary = b.get("dictionary") or []
         self.pause_mode = b.get("pause_mode", "naturel")
+        self.title = (b.get("title") or "voix-off").strip()[:100]
+        self.voice_name = (b.get("voice_name") or "").strip()[:80]
+        self.downloaded = False
+        self.drive_id = None
+        self.drive_status = None
         self.natural = None
 
     def listen(self, c, a):
@@ -533,6 +572,25 @@ class Job:
         if self.final and os.path.exists(self.final):
             os.remove(self.final)
         self.final = out
+        self.send_to_drive()
+
+    def send_to_drive(self):
+        if not G.connected() or not self.final:
+            return
+        self.drive_status = "envoi"
+        path, chars = self.final, sum(c["chars"] for c in self.chunks)
+
+        def work():
+            try:
+                props = {"voix": self.voice_name, "job": self.id, "caracteres": chars,
+                         "duree": int(os.path.getsize(path) * 8 / 192000),
+                         "telechargee": "1" if self.downloaded else "0"}
+                self.drive_id = G.upload(path, safe_name(self.title) + ".mp3", props, self.drive_id)
+                self.drive_status = "ok"
+            except Exception as e:
+                log.warning("Envoi Drive échoué : %s", e)
+                self.drive_status = "erreur"
+        threading.Thread(target=work, daemon=True).start()
 
     def public(self):
         total = len(self.chunks)
@@ -556,6 +614,7 @@ class Job:
             "regenerations": sum(max(0, len(c["attempts"]) - 1) for c in self.chunks),
             "cost": cost(self.chars_billed, self.model, self.asr_seconds),
             "asr": self.asr, "asr_note": self.asr_note, "pauses_voix": self.natural,
+            "drive_id": self.drive_id, "drive_status": self.drive_status, "downloaded": self.downloaded,
             "final": f"/api/jobs/{self.id}/final.mp3" if self.final else None,
             "chunks": chunks,
         })
@@ -672,13 +731,152 @@ def chunk_file(jid: str, i: int, n: int):
 
 
 @app.get("/api/jobs/{jid}/final.mp3")
-def final_file(jid: str, name: str = "voix-off"):
+def final_file(jid: str, name: str = "", dl: int = 0):
     j = get_job(jid)
     if not j.final:
         raise HTTPException(404)
-    safe = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", name)
-    safe = re.sub(r"\s+", " ", safe).strip(" .")[:80] or "voix-off"
-    return FileResponse(j.final, media_type="audio/mpeg", filename=f"{safe}.mp3")
+    if dl:
+        j.downloaded = True
+        if j.drive_id and G.connected():
+            threading.Thread(target=lambda: _quiet(G.set_props, j.drive_id, {"telechargee": "1"}),
+                             daemon=True).start()
+    return FileResponse(j.final, media_type="audio/mpeg", filename=f"{safe_name(name or j.title)}.mp3")
+
+
+def safe_name(name):
+    safe = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", name or "")
+    return re.sub(r"\s+", " ", safe).strip(" .")[:80] or "voix-off"
+
+
+def _quiet(fn, *a):
+    try:
+        fn(*a)
+    except Exception as e:
+        log.warning("Drive : %s", e)
+
+
+# ---------------------------------------------------------------------------
+# Google Drive : connexion et historique permanent
+# ---------------------------------------------------------------------------
+
+def need_drive():
+    if not G.connected():
+        raise HTTPException(400, "Google Drive n'est pas connecté.")
+
+
+@app.get("/oauth/start")
+def oauth_start():
+    if not G.configured():
+        raise HTTPException(400, "Google Drive n'est pas configuré sur le serveur.")
+    return RedirectResponse(G.auth_url())
+
+
+@app.get("/oauth/callback", response_class=HTMLResponse)
+def oauth_callback(code: str = "", state: str = "", error: str = ""):
+    back = "<p><a href='/#historique'>Retour à VoixStable</a></p>"
+    if error or not code:
+        return _PAGE.format(t="Connexion annulée", b=f"<p>Google a répondu : {error or 'aucun code'}.</p>" + back)
+    try:
+        refresh = G.exchange(code, state)
+        G.folder_id()
+    except Exception as e:
+        return _PAGE.format(t="Connexion impossible", b=f"<p>{e}</p>" + back)
+    log.warning("GDRIVE_TOKEN_ENC_TO_SAVE=%s", G.encrypt(refresh))
+    for j in list(JOBS.values()):
+        if j.final and not j.drive_id:
+            j.send_to_drive()
+    return _PAGE.format(t="Google Drive connecté", b="<p>Tes voix off terminées seront rangées "
+                        f"automatiquement dans le dossier « {G.FOLDER_NAME} » de ton Drive.</p>" + back)
+
+
+def _drive_item(f):
+    p = f.get("appProperties") or {}
+    name = f.get("name", "")
+    return {"id": f["id"], "title": name[:-4] if name.lower().endswith(".mp3") else name,
+            "size": int(f.get("size", 0) or 0), "created": f.get("createdTime"),
+            "voice": p.get("voix", ""), "job": p.get("job", ""), "duration": int(p.get("duree", 0) or 0),
+            "downloaded": p.get("telechargee") == "1"}
+
+
+@app.get("/api/drive/status")
+async def drive_status():
+    out = {"configured": G.configured(), "connected": G.connected()}
+    if G.connected():
+        try:
+            files = await run_blocking(G.list_files)
+            out["folder_bytes"] = sum(int(f.get("size", 0) or 0) for f in files)
+            out["count"] = len(files)
+            out["settings"] = await run_blocking(G.get_settings)
+            out["storage"] = await run_blocking(G.storage)
+        except Exception as e:
+            out["error"] = str(e)
+    return out
+
+
+@app.get("/api/drive/files")
+async def drive_files():
+    need_drive()
+    try:
+        files = await run_blocking(G.list_files)
+    except Exception as e:
+        raise HTTPException(502, str(e))
+    return {"files": [_drive_item(f) for f in files]}
+
+
+def _stream(fid, request, filename=None):
+    need_drive()
+    try:
+        r = G.open_media(fid, request.headers.get("range"))
+    except Exception as e:
+        raise HTTPException(502, str(e))
+    headers = {k: r.headers[k] for k in ("Content-Length", "Content-Range", "Accept-Ranges") if k in r.headers}
+    headers.setdefault("Accept-Ranges", "bytes")
+    if filename:
+        from urllib.parse import quote
+        headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return StreamingResponse(r.iter_content(64 * 1024), status_code=r.status_code,
+                             media_type="audio/mpeg", headers=headers)
+
+
+@app.get("/api/drive/files/{fid}/audio")
+def drive_audio(fid: str, request: Request):
+    return _stream(fid, request)
+
+
+@app.get("/api/drive/files/{fid}/download")
+def drive_download(fid: str, request: Request, name: str = "voix-off"):
+    threading.Thread(target=lambda: _quiet(G.set_props, fid, {"telechargee": "1"}), daemon=True).start()
+    for j in JOBS.values():
+        if j.drive_id == fid:
+            j.downloaded = True
+    return _stream(fid, request, safe_name(name) + ".mp3")
+
+
+@app.post("/api/drive/files/{fid}/downloaded")
+async def drive_mark(fid: str):
+    need_drive()
+    await run_blocking(G.set_props, fid, {"telechargee": "1"})
+    return {"ok": True}
+
+
+@app.post("/api/drive/files/{fid}/delete")
+async def drive_delete(fid: str):
+    need_drive()
+    await run_blocking(G.trash, fid)
+    for j in JOBS.values():
+        if j.drive_id == fid:
+            j.drive_id = None
+    return {"ok": True}
+
+
+@app.post("/api/drive/settings")
+async def drive_settings(request: Request):
+    need_drive()
+    b = await request.json()
+    days = max(0, min(365, int(b.get("cleanup_days", 0))))
+    await run_blocking(G.set_settings, days)
+    n = await run_blocking(G.cleanup, days) if days else 0
+    return {"ok": True, "cleanup_days": days, "removed": n}
 
 
 @app.get("/api/health")
@@ -705,6 +903,18 @@ def janitor():
         with LOCK:
             for jid in [k for k, j in JOBS.items() if j.created < limit]:
                 JOBS.pop(jid, None)
+        # nettoyage automatique du Drive (une fois par jour environ)
+        if G.connected() and time.time() - janitor.last_drive > 20 * 3600:
+            janitor.last_drive = time.time()
+            try:
+                n = G.cleanup(G.get_settings()["cleanup_days"])
+                if n:
+                    log.info("Drive : %d ancienne(s) voix off mise(s) à la corbeille.", n)
+            except Exception as e:
+                log.warning("Nettoyage Drive : %s", e)
+
+
+janitor.last_drive = 0
 
 
 threading.Thread(target=janitor, daemon=True).start()

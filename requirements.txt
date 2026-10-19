@@ -5,3 +5,4 @@ numpy>=1.26
 num2words==0.5.14
 imageio-ffmpeg==0.6.0
 requests>=2.31
+cryptography>=42

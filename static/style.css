@@ -348,7 +348,7 @@ audio { color-scheme: inherit; }
 
 /* Générations téléchargées : doré */
 .history-list { display: flex; flex-direction: column; gap: 8px; }
-.hrow { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 16px; background: var(--field); border: 1px solid var(--line); }
+.hrow { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto auto; gap: 8px 12px; align-items: center; padding: 12px 14px; border-radius: 16px; background: var(--field); border: 1px solid var(--line); }
 .hrow .htext { display: flex; flex-direction: column; min-width: 0; }
 .hrow .htext b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hmark { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; border: 2px dashed var(--line); font-weight: 700; }
@@ -362,4 +362,21 @@ audio { color-scheme: inherit; }
   .hrow { grid-template-columns: 30px minmax(0, 1fr); }
   .hrow .hbadge { grid-column: 2; justify-self: start; }
   .hrow .row-tight { grid-column: 1 / -1; }
+}
+
+.hbadges { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.hwhere { font-size: .7rem; color: var(--muted); white-space: nowrap; }
+.hwhere.serveur { color: var(--warn); }
+.hrow .hplayer { grid-column: 2 / -1; width: 100%; height: 38px; }
+.drive-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.drive-logo { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; background: var(--field); border: 1px solid var(--line); flex: none; }
+.drive-text { display: flex; flex-direction: column; flex: 1 1 260px; min-width: 0; }
+.drive-body { margin-top: 16px; }
+.drive-meter { height: 8px; border-radius: 99px; background: var(--led-off); overflow: hidden; }
+.drive-meter > div { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, #0f9d58, #4285f4); transition: width .5s ease; }
+.drive-meter > div.high { background: linear-gradient(90deg, #fbbc04, var(--bad)); }
+@media (max-width: 760px) {
+  .hbadges { grid-column: 2; align-items: flex-start; flex-direction: row; flex-wrap: wrap; }
+  .hrow .hplayer { grid-column: 1 / -1; }
+  .tabs { overflow-x: auto; }
 }
