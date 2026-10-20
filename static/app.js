@@ -954,6 +954,7 @@ function addWord(mot, lecture) {
   return true;
 }
 $("#btnDAdd").onclick = () => {
+  if ($("#dLecture").value.includes("|")) { toast("Tu as plusieurs écritures : clique d'abord sur « Écouter », puis sur « Garder celle-ci » sous la bonne.", true, 6000); return; }
   if (!addWord($("#dMot").value, $("#dLecture").value)) { toast("Remplis le mot et sa lecture.", true); return; }
   save(); renderDico(); $("#dMot").value = ""; $("#dLecture").value = ""; $("#dMot").focus();
 };
@@ -1057,6 +1058,12 @@ $("#importFile").addEventListener("change", async e => {
 
 /* ---------------- Démarrage ---------------- */
 load();
+(S.dictionary || []).forEach(d => {
+  let r = String(d.lecture || "");
+  if (r.includes("|")) r = r.split("|").map(x => x.trim()).filter(Boolean)[0] || "";
+  d.lecture = r.replace(/[^\p{L}\p{N}\s'’-]/gu, " ").replace(/\s+/g, " ").trim();
+});
+S.dictionary = (S.dictionary || []).filter(d => d.mot && d.lecture);
 (() => {
   let k = S.voices.filter(v => v.imported).length;
   S.voices.forEach(v => {

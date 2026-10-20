@@ -119,9 +119,19 @@ def clean_characters(text):
     return text.strip()
 
 
+def clean_reading(r):
+    """Une lecture du dictionnaire ne doit contenir que des mots : pas de point, de barre, etc.
+    (sinon MiniMax lit « point » ou fait une pause au milieu de la phrase)."""
+    r = str(r or "")
+    if "|" in r:                       # plusieurs essais collés par erreur : on garde le premier
+        r = next((x for x in r.split("|") if x.strip()), "")
+    r = re.sub(r"[^\w\sÀ-ÿ'’-]", " ", r)
+    return re.sub(r"\s+", " ", r).strip()
+
+
 def apply_dictionary(text, entries):
     """entries: liste de {"mot": ..., "lecture": ...}. Mot entier, insensible à la casse."""
-    items = [(e.get("mot", "").strip(), e.get("lecture", "").strip()) for e in (entries or [])]
+    items = [(e.get("mot", "").strip(), clean_reading(e.get("lecture", ""))) for e in (entries or [])]
     items = [i for i in items if i[0] and i[1]]
     items.sort(key=lambda x: -len(x[0]))
     for word, reading in items:
