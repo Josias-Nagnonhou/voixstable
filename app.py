@@ -490,10 +490,12 @@ class Job:
 
     # -- déroulement -------------------------------------------------------
     def run(self):
+        audio.background_priority()
         try:
             n = len(self.chunks)
 
             def first(i):
+                audio.background_priority()
                 if self.cancel:
                     return
                 self.chunks[i]["status"] = "generation"
@@ -531,6 +533,7 @@ class Job:
                 self.phase = f"Correction automatique ({len(bad)} morceau(x), passage {round_ + 1})"
 
                 def redo(i):
+                    audio.background_priority()
                     if self.cancel:
                         return
                     self.chunks[i]["status"] = "correction"

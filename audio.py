@@ -17,9 +17,25 @@ OUT_SR = 44100      # export
 # Entrées / sorties
 # ---------------------------------------------------------------------------
 
+def _low_priority():
+    try:
+        os.nice(10)
+    except Exception:
+        pass
+
+
+def background_priority():
+    """Baisse la priorité du fil de calcul courant : le site reste réactif pendant les analyses."""
+    try:
+        import threading
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 10)
+    except Exception:
+        pass
+
+
 def _run(args, data=None):
-    p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", *args],
-                       input=data, capture_output=True)
+    p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-threads", "1", *args],
+                       input=data, capture_output=True, preexec_fn=_low_priority)
     if p.returncode != 0:
         raise RuntimeError("ffmpeg: " + p.stderr.decode(errors="ignore")[-400:])
     return p.stdout
@@ -394,7 +410,7 @@ def chunk_metrics(mp3_bytes, chars, expected_pauses=0.0):
         return {"duree": round(dur, 2), "vide": True}
     db = frame_db(x)
     mask, floor, loud, thr = speech_mask(db)
-    t, f0 = pitch_track(x, mask, 600)
+    t, f0 = pitch_track(x, mask, 220)
     speech = mask.sum() * HOP / SR
     talk_time = max(0.2, dur - expected_pauses)
     return {
@@ -513,7 +529,7 @@ TAIL = 0.12   # respiration gardée en fin de morceau (secondes)
 HEAD = 0.05   # attaque gardée en début de morceau
 
 
-def assemble(chunk_files, pauses, out_path, level_match=True):
+def assemble(chunk_files, pauses, out_path, level_match=True, levels=None):
     """Assemble les morceaux en un seul MP3, le plus fluide possible.
 
     - garde la petite respiration naturelle de fin de chaque morceau ;
@@ -521,11 +537,12 @@ def assemble(chunk_files, pauses, out_path, level_match=True):
     - volume harmonisé sur la parole seule, avec de petites corrections seulement ;
     - un morceau à la fois en mémoire (plan gratuit de Render).
     """
-    levels = []
-    for f in chunk_files:
-        y = decode(f, OUT_SR)
-        levels.append(speech_level(y, OUT_SR) if len(y) else None)
-        del y
+    if levels is None or len(levels) != len(chunk_files):
+        levels = []
+        for f in chunk_files:
+            y = decode(f, OUT_SR)
+            levels.append(speech_level(y, OUT_SR) if len(y) else None)
+            del y
     valid = [l for l in levels if l is not None]
     target = float(np.median(valid)) if valid else -20.0
     tmp_wav = out_path + ".wav"
@@ -540,10 +557,15 @@ def assemble(chunk_files, pauses, out_path, level_match=True):
                 continue
             y = decode(f, OUT_SR)
             y = trim_soft(y, OUT_SR, HEAD, TAIL)
-            if level_match:
-                diff = target - lvl
-                if abs(diff) > 1.0:
-                    y = y * (10 ** (float(np.clip(diff, -4, 4)) / 20))
+            diff = (target - lvl) if level_match else 0.0
+            if abs(diff) <= 1.0:
+                diff = 0.0
+            # niveau final : parole autour de -18 dBFS (volume standard d'une voix off)
+            gain = float(np.clip(diff, -4, 4)) + float(np.clip(-18.0 - target, -12, 12))
+            y = y * (10 ** (gain / 20))
+            peak = float(np.max(np.abs(y))) if len(y) else 0.0
+            if peak > 0.97:                       # limiteur doux pour éviter la saturation
+                y = np.tanh(y / peak * 1.4) / np.tanh(1.4) * 0.97
             fin = min(len(y) // 4, int(0.02 * OUT_SR))
             fout = min(len(y) // 4, int(0.06 * OUT_SR))
             if fin > 0:
@@ -556,8 +578,7 @@ def assemble(chunk_files, pauses, out_path, level_match=True):
                 gap = max(0.06, p - TAIL)
                 w.writeframes(np.zeros(int(gap * OUT_SR), dtype=np.int16).tobytes())
         w.writeframes(np.zeros(int(0.3 * OUT_SR), dtype=np.int16).tobytes())
-    _run(["-i", tmp_wav, "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-          "-ar", str(OUT_SR), "-codec:a", "libmp3lame", "-b:a", "192k", "-y", out_path])
+    _run(["-i", tmp_wav, "-codec:a", "libmp3lame", "-b:a", "192k", "-y", out_path])
     os.remove(tmp_wav)
     return out_path
 
