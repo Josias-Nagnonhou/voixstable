@@ -91,6 +91,7 @@ def cost(chars, model, asr_seconds=0.0):
 
 @app.exception_handler(MiniMaxError)
 async def mm_error(request, exc):
+    log.warning("MiniMax a refusé %s : %s", request.url.path, exc)
     return JSONResponse({"detail": str(exc)}, status_code=502)
 
 
@@ -504,6 +505,7 @@ class Job:
                     self.chunks[i]["status"] = "genere"
                     self.chunks[i]["best"] = self.chunks[i]["attempts"][-1]["n"]
                 except MiniMaxError as e:
+                    log.warning("MiniMax a refusé un morceau : %s", e)
                     self.chunks[i]["status"] = "erreur"
                     self.chunks[i]["issues"] = [str(e)]
                     if e.code in (1004, 1008, 2013):
