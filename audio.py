@@ -80,12 +80,13 @@ def frame_db(x):
     n = 1 + max(0, (len(x) - FRAME) // HOP)
     if len(x) < FRAME:
         return np.array([-100.0])
-    idx = np.arange(FRAME)[None, :] + HOP * np.arange(n)[:, None]
-    # par blocs pour limiter la mémoire
+    # par blocs pour limiter la mémoire (l'index complet pèserait des centaines de Mo)
+    base = np.arange(FRAME, dtype=np.int64)[None, :]
     out = np.empty(n, dtype=np.float32)
-    step = 20000
+    step = 4000
     for i in range(0, n, step):
-        f = x[idx[i:i + step]]
+        k = np.arange(i, min(n, i + step), dtype=np.int64)
+        f = x[base + HOP * k[:, None]]
         rms = np.sqrt(np.mean(f * f, axis=1) + 1e-12)
         out[i:i + step] = 20 * np.log10(rms + 1e-9)
     return out
