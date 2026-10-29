@@ -209,6 +209,13 @@
         <strong>Choisis ou dépose ton audio</strong>
         <span>MP3, WAV, M4A, et même une vidéo MP4. Un long fichier (prêche, podcast) est accepté : l'outil choisira lui-même le meilleur passage.</span>
       </label>
+      <div class="or-sep"><span>ou colle le lien d'une vidéo</span></div>
+      <div class="urlbox">
+        <input type="url" id="videoUrl" placeholder="https://www.youtube.com/watch?v=…  (YouTube, TikTok, Facebook, Instagram, X…)">
+        <input type="text" id="videoStart" placeholder="Départ ex. 2:10" title="Optionnel : moment de la vidéo où la voix commence (l'outil écoute 12 minutes à partir de là)">
+        <button class="btn primary" id="btnFromUrl">Récupérer la voix</button>
+      </div>
+      <p class="muted small">L'outil écoute jusqu'à 12 minutes de la vidéo (à partir du départ choisi, sinon depuis le début) et garde le meilleur passage. Pour une vidéo d'1 h, mets le départ là où la personne parle seule, sans musique.</p>
       <div class="row wrap">
         <label class="field"><span>Durée du passage à cloner</span>
           <select id="targetLen">

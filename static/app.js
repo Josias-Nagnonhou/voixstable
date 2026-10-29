@@ -299,7 +299,7 @@ function openWizard() {
   W = {};
   $("#wizard").hidden = false; $("#voiceEditor").hidden = true;
   wizStep(1);
-  $("#fileInput").value = ""; $("#promptText").value = ""; $("#voiceName").value = "";
+  $("#fileInput").value = ""; $("#videoUrl").value = ""; $("#videoStart").value = ""; $("#promptText").value = ""; $("#voiceName").value = "";
   $("#wizard").scrollIntoView({ behavior: "smooth" });
 }
 function wizStep(n) {
@@ -349,6 +349,28 @@ async function analyzeFile(file) {
   } catch (e) { toast(e.message, true, 6000); }
   finally { $("#analyzing").hidden = true; }
 }
+
+async function analyzeUrl() {
+  const url = $("#videoUrl").value.trim();
+  if (!/^https?:\/\//.test(url)) { toast("Colle le lien complet de la vidéo (il commence par https://).", true); return; }
+  const btn = $("#btnFromUrl");
+  btn.disabled = true;
+  $("#analyzing").textContent = "Récupération de l'audio de la vidéo puis analyse de la voix… (jusqu'à 2 minutes)";
+  $("#analyzing").hidden = false;
+  try {
+    const a = await api("/api/analyze-url", { method: "POST", body: {
+      url, start: $("#videoStart").value.trim(), use_best: $("#useBest").value, target: $("#targetLen").value } });
+    W.analysis = a;
+    if (!$("#voiceName").value) $("#voiceName").value = (a.source?.auteur || a.source?.titre || "Voix").slice(0, 40);
+    renderAnalysis(a);
+    if (a.source?.titre) $("#sampleInfo").textContent += ` Source : « ${a.source.titre} »${a.source.auteur ? " — " + a.source.auteur : ""}.`;
+    wizStep(2);
+    transcribePrompt();
+  } catch (e) { toast(e.message, true, 9000); }
+  finally { btn.disabled = false; $("#analyzing").hidden = true; $("#analyzing").textContent = "Analyse de la voix en cours…"; }
+}
+$("#btnFromUrl").onclick = analyzeUrl;
+$("#videoUrl").addEventListener("keydown", e => { if (e.key === "Enter") analyzeUrl(); });
 
 function mmss(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
 function renderAnalysis(a) {

@@ -263,6 +263,12 @@ details.adv[open] summary { margin-bottom: 14px; }
 .drop input { display: none; }
 .drop strong { font-size: 1.05rem; }
 .drop span { color: var(--muted); font-size: .88rem; max-width: 520px; }
+.or-sep { display: flex; align-items: center; gap: 12px; margin: 4px 0 12px; color: var(--muted); font-size: .85rem; }
+.or-sep::before, .or-sep::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.urlbox { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.urlbox input { flex: 1 1 260px; min-width: 0; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--field); color: var(--ink); font: inherit; }
+.urlbox #videoStart { flex: 0 1 140px; }
+.urlbox input:focus { outline: none; border-color: var(--v1); }
 .loading { margin-top: 14px; padding: 13px 18px; border-radius: 16px; background: var(--tint); font-weight: 600; color: var(--accent-ink); }
 .loading::before { content: ""; display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; margin-right: 10px; vertical-align: -1px; animation: spin .8s linear infinite; }
 

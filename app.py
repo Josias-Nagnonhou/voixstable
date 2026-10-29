@@ -167,6 +167,50 @@ async def analyze(file: UploadFile = File(...), use_best: str = Form("true"),
     return jsonable(info)
 
 
+_url_lock = threading.Semaphore(1)   # un seul téléchargement à la fois (serveur modeste)
+
+
+@app.post("/api/analyze-url")
+async def analyze_url(request: Request):
+    import fetchurl
+    b = await request.json()
+    try:
+        start = fetchurl.parse_time(str(b.get("start", "")))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    sid = uuid.uuid4().hex[:12]
+    d = os.path.join(SAMPLES, sid)
+    os.makedirs(d)
+
+    def work():
+        with _url_lock:
+            src, meta = fetchurl.fetch_audio(b.get("url", ""), d, start)
+            info, _, _ = audio.prepare_clone_files(src, d, str(b.get("use_best", "true")) == "true",
+                                                   float(b.get("target", 90)))
+            os.remove(src)
+            return info, meta
+
+    try:
+        info, meta = await run_blocking(work)
+    except ValueError as e:
+        shutil.rmtree(d, ignore_errors=True)
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        shutil.rmtree(d, ignore_errors=True)
+        log.warning("analyze-url : %s", e)
+        raise HTTPException(400, f"Impossible de lire l'audio de cette vidéo : {str(e)[:200]}")
+    # les temps du meilleur passage sont donnés dans la vidéo entière
+    for k in ("segment_debut", "segment_fin"):
+        if k in info:
+            info[k] = float(info[k]) + meta["debut"]
+    info["source"] = meta
+    info["sample_id"] = sid
+    info["url_echantillon"] = f"/api/samples/{sid}/echantillon.mp3"
+    info["url_extrait"] = f"/api/samples/{sid}/extrait.mp3"
+    json.dump(jsonable(info), open(os.path.join(d, "info.json"), "w"))
+    return jsonable(info)
+
+
 @app.get("/api/samples/{sid}/{name}")
 def sample_file(sid: str, name: str):
     if not re.fullmatch(r"[a-f0-9]{12}", sid) or name not in ("echantillon.mp3", "extrait.mp3"):
