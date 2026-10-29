@@ -359,17 +359,40 @@ async function analyzeUrl() {
   $("#analyzing").hidden = false;
   try {
     const a = await api("/api/analyze-url", { method: "POST", body: {
-      url, start: $("#videoStart").value.trim(), use_best: $("#useBest").value, target: $("#targetLen").value } });
+      url, start: $("#videoStart").value.trim(), use_best: $("#useBest").value, target: $("#targetLen").value,
+      cookies: S.ytCookies || "" } });
     W.analysis = a;
     if (!$("#voiceName").value) $("#voiceName").value = (a.source?.auteur || a.source?.titre || "Voix").slice(0, 40);
     renderAnalysis(a);
     if (a.source?.titre) $("#sampleInfo").textContent += ` Source : « ${a.source.titre} »${a.source.auteur ? " — " + a.source.auteur : ""}.`;
     wizStep(2);
     transcribePrompt();
-  } catch (e) { toast(e.message, true, 9000); }
+  } catch (e) {
+    if (/anti-robot/.test(e.message) && !S.ytCookies) {
+      toast("YouTube bloque le serveur. Va dans Réglages → « YouTube : débloquer le clonage par lien » (2 minutes, une seule fois).", true, 12000);
+    } else toast(e.message, true, 10000);
+  }
   finally { btn.disabled = false; $("#analyzing").hidden = true; $("#analyzing").textContent = "Analyse de la voix en cours…"; }
 }
 $("#btnFromUrl").onclick = analyzeUrl;
+
+function renderYtCookies() {
+  const on = !!S.ytCookies;
+  $("#ytCookiesStatus").textContent = on ? `✓ Compte YouTube ajouté le ${S.ytCookiesDate || "?"}` : "Aucun fichier pour l'instant.";
+  $("#btnYtCookiesDel").hidden = !on;
+}
+$("#ytCookiesFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  const txt = await f.text();
+  if (!/youtube\.com/.test(txt) || !/\t/.test(txt)) { toast("Ce fichier ne ressemble pas à des cookies YouTube. Exporte-le depuis youtube.com avec l'extension.", true, 8000); return; }
+  // on ne garde que les lignes YouTube / Google utiles
+  const keep = txt.split(/\r?\n/).filter(l => l.startsWith("#") || /(^|\.)(youtube\.com|google\.com)\t/.test(l.replace(/^#HttpOnly_/, "")));
+  S.ytCookies = keep.join("\n"); S.ytCookiesDate = new Date().toLocaleDateString("fr-FR"); save(); renderYtCookies();
+  toast("Compte YouTube ajouté. Réessaie ton lien dans Mes voix.");
+});
+$("#btnYtCookiesDel").onclick = () => { delete S.ytCookies; delete S.ytCookiesDate; save(); renderYtCookies(); };
+renderYtCookies();
 $("#videoUrl").addEventListener("keydown", e => { if (e.key === "Enter") analyzeUrl(); });
 
 function mmss(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
@@ -1061,7 +1084,7 @@ $("#btnSaveKey").onclick = async () => {
   catch (e) { st.textContent = "✗ " + e.message; st.className = "status bad"; }
 };
 $("#btnExport").onclick = () => {
-  const data = { ...S }; delete data.apiKey; delete data.lastJob; delete data.script;
+  const data = { ...S }; delete data.apiKey; delete data.ytCookies; delete data.lastJob; delete data.script;
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
   a.download = `voixstable-reglages-${new Date().toISOString().slice(0, 10)}.json`; a.click();

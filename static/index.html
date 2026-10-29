@@ -462,6 +462,22 @@
     </div>
   </div>
 
+  <div class="card" id="ytCard">
+    <h2>YouTube : débloquer le clonage par lien</h2>
+    <p class="muted">YouTube bloque souvent les serveurs. La solution : donner à l'outil la « carte de connexion » (fichier cookies) d'un compte YouTube. Utilise de préférence un <b>compte secondaire</b>, pas ta chaîne principale. Le fichier reste dans ce navigateur et n'est envoyé au serveur qu'au moment de récupérer une vidéo.</p>
+    <ol class="muted small">
+      <li>Sur un ordinateur avec Chrome, installe l'extension <a href="https://chromewebstore.google.com/search/Get%20cookies.txt%20LOCALLY" target="_blank" rel="noopener">« Get cookies.txt LOCALLY »</a>.</li>
+      <li>Ouvre <a href="https://www.youtube.com" target="_blank" rel="noopener">youtube.com</a>, connecté avec le compte secondaire.</li>
+      <li>Clique sur l'extension puis sur <b>Export</b> : un fichier <code>youtube.com_cookies.txt</code> se télécharge.</li>
+      <li>Importe ce fichier ici.</li>
+    </ol>
+    <div class="actions">
+      <label class="btn primary">Importer le fichier cookies<input type="file" id="ytCookiesFile" accept=".txt,text/plain" hidden></label>
+      <button class="btn ghost" id="btnYtCookiesDel" hidden>Retirer</button>
+      <span class="muted small" id="ytCookiesStatus"></span>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Sauvegarde</h2>
     <p class="muted">Tes voix, réglages et dictionnaire sont gardés dans ce navigateur. Pour les retrouver sur un autre appareil (téléphone, autre PC), exporte-les puis importe le fichier là-bas.</p>

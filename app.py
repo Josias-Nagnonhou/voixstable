@@ -184,7 +184,7 @@ async def analyze_url(request: Request):
 
     def work():
         with _url_lock:
-            src, meta = fetchurl.fetch_audio(b.get("url", ""), d, start)
+            src, meta = fetchurl.fetch_audio(b.get("url", ""), d, start, str(b.get("cookies") or "")[:400000])
             info, _, _ = audio.prepare_clone_files(src, d, str(b.get("use_best", "true")) == "true",
                                                    float(b.get("target", 90)))
             os.remove(src)

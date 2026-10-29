@@ -34,7 +34,7 @@ def friendly(err):
     low = e.lower()
     if "sign in to confirm" in low or "not a bot" in low:
         return ("YouTube a bloqué le téléchargement depuis le serveur (protection anti-robot). "
-                "Réessaie dans quelques minutes, ou télécharge l'audio et importe-le comme fichier.")
+                "Ajoute (ou renouvelle) le fichier cookies YouTube dans Réglages, puis réessaie.")
     if "private" in low:
         return "Cette vidéo est privée : l'outil ne peut pas y accéder."
     if "unsupported url" in low:
@@ -50,7 +50,7 @@ def friendly(err):
     return "Impossible de récupérer l'audio de ce lien : " + e.replace("ERROR: ", "")[-220:]
 
 
-def fetch_audio(url, workdir, start=0.0):
+def fetch_audio(url, workdir, start=0.0, cookies=""):
     """Télécharge la fenêtre audio et renvoie (chemin, infos)."""
     import yt_dlp
     from yt_dlp.utils import download_range_func
@@ -58,13 +58,31 @@ def fetch_audio(url, workdir, start=0.0):
     url = (url or "").strip()
     if not re.match(r"https?://", url):
         raise ValueError("Colle un lien qui commence par https://")
-    base = {"quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True,
-            "ffmpeg_location": audio.FFMPEG, "socket_timeout": 30, "retries": 3}
-    try:
-        with yt_dlp.YoutubeDL(base) as y:
-            meta = y.extract_info(url, download=False)
-    except Exception as e:
-        raise ValueError(friendly(e))
+    common = {"quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True,
+              "ffmpeg_location": audio.FFMPEG, "socket_timeout": 30, "retries": 3}
+    if cookies and cookies.strip():
+        cf = os.path.join(workdir, "cookies.txt")
+        with open(cf, "w") as f:
+            f.write(cookies if cookies.startswith("# Netscape") else "# Netscape HTTP Cookie File\n" + cookies)
+        common["cookiefile"] = cf
+    # plusieurs façons de se présenter à YouTube : si l'une est bloquée, on essaie la suivante
+    tries = [{}]
+    if re.search(r"youtu\.?be", url):
+        tries += [{"extractor_args": {"youtube": {"player_client": [c]}}}
+                  for c in ("tv_simply", "web_safari", "mweb", "android_vr")]
+    meta, err, base = None, None, common
+    for t in tries:
+        base = dict(common, **t)
+        try:
+            with yt_dlp.YoutubeDL(base) as y:
+                meta = y.extract_info(url, download=False)
+            break
+        except Exception as e:
+            err = e
+            if "not a bot" not in str(e) and "sign in" not in str(e).lower():
+                break
+    if meta is None:
+        raise ValueError(friendly(err))
     if meta.get("_type") == "playlist":
         raise ValueError("C'est une playlist : colle le lien d'une seule vidéo.")
     if meta.get("is_live"):
@@ -86,6 +104,8 @@ def fetch_audio(url, workdir, start=0.0):
             y.download([url])
     except Exception as e:
         raise ValueError(friendly(e))
+    if os.path.exists(os.path.join(workdir, "cookies.txt")):
+        os.remove(os.path.join(workdir, "cookies.txt"))
     files = [f for f in glob.glob(os.path.join(workdir, "source.*")) if not f.endswith(".part")]
     if not files:
         raise ValueError("Le téléchargement n'a rien donné. Réessaie, ou importe le fichier.")
